@@ -59,8 +59,12 @@ func main() {
 	r.Use(gin.Recovery())
 
 	// ─── CORS ──────────────────────────────────────────────────────────────────
+	corsOrigins := []string{"http://localhost:3000"}
+	if frontendURL := os.Getenv("FRONTEND_URL"); frontendURL != "" {
+		corsOrigins = append(corsOrigins, frontendURL)
+	}
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", os.Getenv("FRONTEND_URL")},
+		AllowOrigins:     corsOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,
