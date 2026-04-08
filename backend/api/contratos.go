@@ -572,6 +572,137 @@ func CriarContrato(c *gin.Context) {
 	})
 }
 
+// CriarContratoRetroativo cria eventos passados para histórico e relatórios.
+func CriarContratoRetroativo(c *gin.Context) {
+	authUser := getAuthzUser(c)
+	if !authUser.IsAdmin() {
+		rejectForbidden(c, "Somente administradores podem cadastrar eventos retroativos")
+		return
+	}
+
+	var input models.ContratoRetroativoInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	input.EmpresaNome = strings.TrimSpace(input.EmpresaNome)
+	input.NomeEvento = strings.TrimSpace(input.NomeEvento)
+	input.LocalNome = strings.TrimSpace(input.LocalNome)
+	input.Modalidade = strings.TrimSpace(input.Modalidade)
+	input.KM = strings.TrimSpace(input.KM)
+	input.Consultor = strings.TrimSpace(input.Consultor)
+	input.Observacoes = strings.TrimSpace(input.Observacoes)
+
+	if input.EmpresaNome == "" || input.NomeEvento == "" {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Empresa e nome do evento são obrigatórios"})
+		return
+	}
+
+	eventDate, err := time.Parse("2006-01-02", strings.TrimSpace(input.DataEvento))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Data do evento inválida (use YYYY-MM-DD)"})
+		return
+	}
+
+	today := time.Now().Truncate(24 * time.Hour)
+	if !eventDate.Before(today) {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Evento retroativo precisa ter data no passado"})
+		return
+	}
+
+	if input.Modalidade == "" {
+		input.Modalidade = "Corrida"
+	}
+	if input.KM == "" {
+		input.KM = "0"
+	}
+	if input.Consultor == "" {
+		input.Consultor = authUser.Nome
+	}
+	if input.QtdContratada < 0 {
+		input.QtdContratada = 0
+	}
+	if input.ValorTotal < 0 {
+		input.ValorTotal = 0
+	}
+	if input.ValorPago < 0 {
+		input.ValorPago = 0
+	}
+
+	localNome := ""
+	var localID *string
+	if input.LocalNaoCadastrado {
+		if input.LocalNome == "" {
+			c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Informe o local quando ele não estiver cadastrado"})
+			return
+		}
+		localNome = input.LocalNome
+	} else {
+		if input.LocalID == nil || strings.TrimSpace(*input.LocalID) == "" {
+			c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Selecione um local cadastrado"})
+			return
+		}
+		localIDValue := strings.TrimSpace(*input.LocalID)
+		if err := db.Pool.QueryRow(context.Background(), `SELECT nome FROM locais WHERE id = $1`, localIDValue).Scan(&localNome); err != nil {
+			c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Local cadastrado não encontrado"})
+			return
+		}
+		localID = &localIDValue
+	}
+
+	descricao := "[origem:retroativo] Evento cadastrado manualmente"
+	observacoes := "[origem:retroativo]"
+	if input.LocalNaoCadastrado {
+		observacoes += " [local:manual]"
+	}
+	if input.Observacoes != "" {
+		observacoes += " " + input.Observacoes
+	}
+
+	id := fmt.Sprintf("%d-%d", time.Now().Year(), time.Now().UnixMilli())
+
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO contratos (
+			id, empresa_id, empresa_nome, descricao, valor_total, data_evento,
+			local_id, local_nome, modalidade, qtd_contratada, qtd_kit, km,
+			status, valor_pago, data_pagamento, consultor, possui_kit, tipo_kit,
+			link_gateway, qr_code_pix, nome_evento, capa_url, observacoes, pix_copia_cola
+		) VALUES (
+			$1, NULL, $2, $3, $4, $5,
+			$6, $7, $8, $9, 0, $10,
+			$11, $12, NULL, $13, false, '',
+			'', '', $14, '', $15, ''
+		)
+	`,
+		id,
+		input.EmpresaNome,
+		descricao,
+		input.ValorTotal,
+		eventDate.Format("2006-01-02"),
+		localID,
+		localNome,
+		input.Modalidade,
+		input.QtdContratada,
+		input.KM,
+		contratoStatusFinalizado,
+		input.ValorPago,
+		input.Consultor,
+		input.NomeEvento,
+		observacoes,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, models.APIResponse{
+		Success: true,
+		Message: "Evento retroativo criado com sucesso",
+		Data:    gin.H{"id": id},
+	})
+}
+
 // AtualizarContrato atualiza os dados de um contrato existente
 func AtualizarContrato(c *gin.Context) {
 	id := c.Param("id")

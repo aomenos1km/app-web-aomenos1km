@@ -146,6 +146,7 @@ func main() {
 		// Contratos / Eventos
 		protected.GET("/contratos", api.ListarContratos)
 		protected.POST("/contratos", api.CriarContrato)
+		protected.POST("/contratos/retroativo", api.CriarContratoRetroativo)
 		protected.GET("/contratos/:id", api.BuscarContrato)
 		protected.PUT("/contratos/:id", api.AtualizarContrato)
 		protected.PUT("/contratos/:id/status", api.AtualizarStatusContrato)

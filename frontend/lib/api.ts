@@ -276,6 +276,22 @@ export interface Contrato {
   criado_em: string
 }
 
+export interface ContratoRetroativoInput {
+  empresa_nome: string
+  nome_evento: string
+  data_evento: string
+  local_id?: string
+  local_nome?: string
+  local_nao_cadastrado?: boolean
+  modalidade?: string
+  qtd_contratada?: number
+  valor_total?: number
+  valor_pago?: number
+  km?: string
+  consultor?: string
+  observacoes?: string
+}
+
 export type ContratoPipelineStatus =
   | 'Novo Pedido'
   | 'Em Negociação'
@@ -320,6 +336,11 @@ export const contratos = {
     apiFetch<{ success: boolean; data: ContratoPublico }>(`/api/eventos/publico/slug/${encodeURIComponent(slug)}`),
   criar: (data: Partial<Contrato>) =>
     apiFetch('/api/contratos', { method: 'POST', body: JSON.stringify(data) }),
+  criarRetroativo: (data: ContratoRetroativoInput) =>
+    apiFetch<{ success: boolean; data: { id: string } }>('/api/contratos/retroativo', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   atualizar: (id: string, data: Partial<Contrato>) =>
     apiFetch(`/api/contratos/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   atualizarStatus: (id: string, status: ContratoPipelineStatus) =>

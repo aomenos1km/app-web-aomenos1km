@@ -69,6 +69,23 @@ type ContratoStatusInput struct {
 	Status string `json:"status" binding:"required"`
 }
 
+// ContratoRetroativoInput payload para cadastrar eventos passados sem passar pelo gerador
+type ContratoRetroativoInput struct {
+	EmpresaNome         string  `json:"empresa_nome" binding:"required"`
+	NomeEvento          string  `json:"nome_evento" binding:"required"`
+	DataEvento          string  `json:"data_evento" binding:"required"`
+	LocalID             *string `json:"local_id"`
+	LocalNome           string  `json:"local_nome"`
+	LocalNaoCadastrado  bool    `json:"local_nao_cadastrado"`
+	Modalidade          string  `json:"modalidade"`
+	QtdContratada       int     `json:"qtd_contratada"`
+	ValorTotal          float64 `json:"valor_total"`
+	ValorPago           float64 `json:"valor_pago"`
+	KM                  string  `json:"km"`
+	Consultor           string  `json:"consultor"`
+	Observacoes         string  `json:"observacoes"`
+}
+
 // ContratoPublico dados mínimos expostos ao formulário público de check-in
 type ContratoPublico struct {
 	ID              string   `json:"id"`

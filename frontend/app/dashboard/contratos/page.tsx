@@ -173,6 +173,11 @@ export default function ContratosPage() {
           <p className="text-sm text-muted-foreground">{filtrados.length} card(s) ativo(s)</p>
         </div>
         <div className="flex items-center gap-2">
+          {isAdmin && (
+            <Link href="/dashboard/contratos/retroativo">
+              <Button size="sm">Cadastrar Evento Retroativo</Button>
+            </Link>
+          )}
           <Button
             variant="outline"
             size="sm"
