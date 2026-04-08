@@ -1,17 +1,5 @@
 {
-  "version": 2,
-  "buildCommand": "cd frontend && npm run build",
-  "outputDirectory": "frontend/.next",
   "framework": "nextjs",
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
-    }
-  ],
-  "functions": {
-    "api/**/*.go": {
-      "runtime": "vercel-go@3.x"
-    }
-  }
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next"
 }
