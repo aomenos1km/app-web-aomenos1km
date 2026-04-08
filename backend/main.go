@@ -37,6 +37,43 @@ func loadLocalEnv() {
 	}
 }
 
+func allowedOriginsFromEnv() []string {
+	origins := []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+
+	if single := strings.TrimSpace(os.Getenv("FRONTEND_URL")); single != "" {
+		origins = append(origins, single)
+	}
+
+	for _, raw := range strings.Split(os.Getenv("FRONTEND_URLS"), ",") {
+		origin := strings.TrimSpace(raw)
+		if origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+
+	return origins
+}
+
+func isAllowedOrigin(origin string, allowed []string) bool {
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return false
+	}
+
+	for _, candidate := range allowed {
+		if origin == candidate {
+			return true
+		}
+	}
+
+	// Aceita previews da Vercel do projeto (URLs mudam a cada deploy)
+	if strings.HasPrefix(origin, "https://app-web-aomenos1km") && strings.HasSuffix(origin, ".vercel.app") {
+		return true
+	}
+
+	return false
+}
+
 func main() {
 	loadLocalEnv()
 
@@ -59,12 +96,11 @@ func main() {
 	r.Use(gin.Recovery())
 
 	// ─── CORS ──────────────────────────────────────────────────────────────────
-	corsOrigins := []string{"http://localhost:3000"}
-	if frontendURL := os.Getenv("FRONTEND_URL"); frontendURL != "" {
-		corsOrigins = append(corsOrigins, frontendURL)
-	}
+	corsOrigins := allowedOriginsFromEnv()
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     corsOrigins,
+		AllowOriginFunc: func(origin string) bool {
+			return isAllowedOrigin(origin, corsOrigins)
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,
