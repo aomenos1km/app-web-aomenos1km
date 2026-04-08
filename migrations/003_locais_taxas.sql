@@ -1,0 +1,12 @@
+ALTER TABLE locais ADD COLUMN IF NOT EXISTS tipo_taxa VARCHAR(20) NOT NULL DEFAULT 'Fixo';
+ALTER TABLE locais ADD COLUMN IF NOT EXISTS taxa_valor NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE locais ADD COLUMN IF NOT EXISTS minimo_pessoas INTEGER NOT NULL DEFAULT 150;
+ALTER TABLE locais ADD COLUMN IF NOT EXISTS capacidade_maxima INTEGER;
+ALTER TABLE locais ADD COLUMN IF NOT EXISTS responsavel VARCHAR(150);
+ALTER TABLE locais ADD COLUMN IF NOT EXISTS whatsapp VARCHAR(20);
+
+UPDATE locais
+   SET tipo_taxa = COALESCE(NULLIF(tipo_taxa, ''), 'Fixo'),
+       taxa_valor = COALESCE(taxa_valor, 0),
+       minimo_pessoas = COALESCE(minimo_pessoas, 150)
+ WHERE TRUE;

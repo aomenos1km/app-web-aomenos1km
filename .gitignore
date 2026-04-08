@@ -1,0 +1,32 @@
+# Environment files
+.env
+.env.*
+!.env.example
+backend/.env.local
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.production.local
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build outputs
+frontend/.next/
+frontend/out/
+frontend/dist/
+backend/bin/
+backend/tmp/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
