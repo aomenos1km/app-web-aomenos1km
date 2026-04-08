@@ -25,6 +25,11 @@ function moeda(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
+function isRetroativoContrato(evento: Contrato) {
+  const texto = `${evento.descricao || ''} ${evento.observacoes || ''}`.toLowerCase()
+  return texto.includes('[origem:retroativo]')
+}
+
 export default function ContratoDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
@@ -76,6 +81,7 @@ export default function ContratoDetailPage() {
 
   if (!evento) return <p className="text-muted-foreground">Evento não encontrado.</p>
 
+  const isRetroativo = isRetroativoContrato(evento)
   const qtdInscritos = Number(evento.qtd_inscritos || 0)
   const qtdContratada = Number(evento.qtd_contratada || 0)
   const pct = qtdContratada > 0 ? Math.round((qtdInscritos / qtdContratada) * 100) : 0
@@ -88,7 +94,10 @@ export default function ContratoDetailPage() {
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold truncate">{evento.nome_evento}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold truncate">{evento.nome_evento}</h1>
+            {isRetroativo && <Badge variant="outline">Retroativo</Badge>}
+          </div>
           <p className="text-sm text-muted-foreground">
             {evento.empresa_nome} · {evento.consultor}
           </p>

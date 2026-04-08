@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
 import { contratos, participantes, type Contrato, type Participante } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -106,6 +107,11 @@ function getEventoLabel(evento: Contrato) {
   const empresaNome = String(evento.empresa_nome || '').trim()
   const nomeBase = nomeEvento || empresaNome || 'Evento sem nome'
   return `${formatDateBR(evento.data_evento)} - ${nomeBase}`
+}
+
+function isRetroativoContrato(evento: Contrato) {
+  const texto = `${evento.descricao || ''} ${evento.observacoes || ''}`.toLowerCase()
+  return texto.includes('[origem:retroativo]')
 }
 
 function getNivelParticipante(participante: Participante) {
@@ -503,7 +509,7 @@ export default function HistoricoPage() {
               <option value="">{loadingEventos ? 'Carregando eventos...' : 'Selecione um evento...'}</option>
               {eventosFiltrados.map(evento => (
                 <option key={evento.id} value={evento.id}>
-                  {getEventoLabel(evento)}
+                  {getEventoLabel(evento)}{isRetroativoContrato(evento) ? ' [Retroativo]' : ''}
                 </option>
               ))}
             </select>
@@ -539,7 +545,10 @@ export default function HistoricoPage() {
             <Card className="border-l-4 border-l-blue-500 shadow-sm">
               <CardContent className="space-y-2 p-5">
                 <p className="text-xs font-black uppercase tracking-wide text-zinc-500">Evento</p>
-                <h2 className="text-2xl font-black text-zinc-900">{eventoSelecionado.nome_evento || eventoSelecionado.empresa_nome}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-2xl font-black text-zinc-900">{eventoSelecionado.nome_evento || eventoSelecionado.empresa_nome}</h2>
+                  {isRetroativoContrato(eventoSelecionado) && <Badge variant="outline">Retroativo</Badge>}
+                </div>
                 <div className="space-y-1 text-sm text-zinc-600">
                   <div className="flex items-center gap-2">
                     <CalendarDays className="h-4 w-4" />

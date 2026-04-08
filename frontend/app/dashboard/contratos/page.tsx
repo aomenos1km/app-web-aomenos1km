@@ -25,6 +25,11 @@ function getCardOrigemInfo(c: Contrato): CardOrigemInfo {
   }
 }
 
+function isRetroativoContrato(c: Contrato) {
+  const texto = `${c.descricao || ''} ${c.observacoes || ''}`.toLowerCase()
+  return texto.includes('[origem:retroativo]')
+}
+
 const PIPELINE_COLUMNS: Array<{ id: ContratoPipelineStatus; title: string; border: string; headerBadge: string }> = [
   { id: 'Novo Pedido', title: 'NOVOS PEDIDOS', border: 'border-t-sky-500', headerBadge: 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200' },
   { id: 'Em Negociação', title: 'EM NEGOCIAÇÃO', border: 'border-t-amber-500', headerBadge: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' },
@@ -241,6 +246,7 @@ export default function ContratosPage() {
                   ) : (
                     cards.map(c => {
                       const origem = getCardOrigemInfo(c)
+                      const isRetroativo = isRetroativoContrato(c)
                       const statusCard = normalizeStatus(c.status) || 'Novo Pedido'
                       const canDrag = canDragCard(c)
                       return (
@@ -284,12 +290,17 @@ export default function ContratosPage() {
                                     <FileText className="h-2.5 w-2.5" />Proposta
                                   </Badge>
                                 )}
+                                {isRetroativo && (
+                                  <Badge variant="outline" className="text-[10px] h-5 flex items-center gap-[3px] border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200">
+                                    Retroativo
+                                  </Badge>
+                                )}
                                 {origem.isSite && (
                                   <Badge variant="outline" className="text-[10px] h-5 flex items-center gap-[3px] border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-700 dark:bg-orange-950/40 dark:text-orange-200">
                                     <Zap className="h-2.5 w-2.5" />Site
                                   </Badge>
                                 )}
-                                {!origem.isSite && !origem.isGerador && !origem.isInterno && (
+                                {!origem.isSite && !origem.isGerador && !origem.isInterno && !isRetroativo && (
                                   <Badge variant="outline" className="text-[10px] h-4 border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-700/40 dark:text-slate-300">Manual</Badge>
                                 )}
                               </div>
