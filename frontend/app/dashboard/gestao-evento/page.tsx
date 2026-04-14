@@ -1253,21 +1253,6 @@ export default function GestaoEventoPage() {
                               </button>
                             )
                           })()}
-                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                  <span className="text-muted-foreground">
-                                    Remova a capa para voltar a usar a arte padrão automaticamente.
-                                  </span>
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={handleRemoverCapa}
-                                    disabled={!canManageEventoSelecionado || uploadingCapa || salvandoCheckout || !formCheckout.capa_url}
-                                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                                  >
-                                    <Trash2 className="mr-1 h-4 w-4" /> Remover capa
-                                  </Button>
-                                </div>
                         </RTableCell>
                         <RTableCell>
                           <span className="inline-flex rounded-full border border-orange-500 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-orange-600">
@@ -1314,6 +1299,21 @@ export default function GestaoEventoPage() {
                   </RTableBody>
                 </RTable>
               )}
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <span className="text-muted-foreground">
+                              Remova a capa para voltar a usar a arte padrão automaticamente.
+                            </span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleRemoverCapa}
+                              disabled={!canManageEventoSelecionado || uploadingCapa || salvandoCheckout || !formCheckout.capa_url}
+                              className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                            >
+                              <Trash2 className="mr-1 h-4 w-4" /> Remover capa
+                            </Button>
+                          </div>
             </CardContent>
           </Card>
         </>
