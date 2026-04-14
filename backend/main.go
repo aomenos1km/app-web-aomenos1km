@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"strings"
@@ -94,6 +95,10 @@ func main() {
 		log.Fatalf("❌ Falha ao conectar ao banco: %v", err)
 	}
 	defer db.Close()
+
+	if err := api.EnsureRuntimeSchema(context.Background()); err != nil {
+		log.Fatalf("❌ Falha ao preparar schema runtime: %v", err)
+	}
 
 	// Modo do Gin (debug | release)
 	gin.SetMode(os.Getenv("GIN_MODE"))
