@@ -364,6 +364,7 @@ func CriarParticipante(c *gin.Context) {
 	if eventoPago {
 		checkoutURL, err = gerarCheckoutAsaas(input, precoIngresso*float64(totalIngressos), empresaNome, nomeEvento, id, dataEvento)
 		if err != nil {
+			fmt.Printf("[ASAAS CHECKOUT ERROR] participante=%s contrato=%s erro=%v\n", id, input.ContratoID, err)
 			c.JSON(http.StatusBadGateway, models.APIResponse{Success: false, Error: "Falha ao gerar pagamento. Tente novamente em instantes."})
 			return
 		}
@@ -413,8 +414,22 @@ type asaasPaymentResponse struct {
 
 type asaasErrorResponse struct {
 	Errors []struct {
+		Code        string `json:"code"`
 		Description string `json:"description"`
 	} `json:"errors"`
+}
+
+func asaasTemCodigoErro(body []byte, code string) bool {
+	var errBody asaasErrorResponse
+	if err := json.Unmarshal(body, &errBody); err != nil {
+		return false
+	}
+	for _, item := range errBody.Errors {
+		if strings.EqualFold(strings.TrimSpace(item.Code), strings.TrimSpace(code)) {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldLogAsaasDescription() bool {
@@ -484,7 +499,17 @@ func gerarCheckoutAsaas(input models.ParticipanteInput, valor float64, empresaNo
 
 	baseURL := strings.TrimSpace(os.Getenv("ASAAS_BASE_URL"))
 	if baseURL == "" {
+		// Compatibilidade com configuração antiga em alguns ambientes.
+		baseURL = strings.TrimSpace(os.Getenv("ASAAS_API_URL"))
+	}
+	if baseURL == "" {
 		baseURL = "https://api-sandbox.asaas.com"
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.HasSuffix(baseURL, "/api/v3") {
+		baseURL = strings.TrimSuffix(baseURL, "/api/v3")
+	} else if strings.HasSuffix(baseURL, "/v3") {
+		baseURL = strings.TrimSuffix(baseURL, "/v3")
 	}
 
 	customerID, err := buscarOuCriarClienteAsaas(baseURL, apiKey, input, participanteID)
@@ -581,6 +606,29 @@ func buscarOuCriarClienteAsaas(baseURL, apiKey string, input models.Participante
 	body, status, err = asaasRequest("POST", baseURL+"/v3/customers", apiKey, payload)
 	if err != nil {
 		return "", err
+	}
+	if status == http.StatusBadRequest {
+		retryPayload := map[string]any{}
+		for k, v := range payload {
+			retryPayload[k] = v
+		}
+
+		shouldRetry := false
+		if asaasTemCodigoErro(body, "invalid_mobilePhone") {
+			delete(retryPayload, "mobilePhone")
+			shouldRetry = true
+		}
+		if asaasTemCodigoErro(body, "invalid_email") {
+			delete(retryPayload, "email")
+			shouldRetry = true
+		}
+
+		if shouldRetry {
+			body, status, err = asaasRequest("POST", baseURL+"/v3/customers", apiKey, retryPayload)
+			if err != nil {
+				return "", err
+			}
+		}
 	}
 	if status < 200 || status >= 300 {
 		return "", fmt.Errorf("ASAAS customers status %d: %s", status, extrairErroAsaas(body))
