@@ -24,12 +24,12 @@ export const metadata: Metadata = {
   description: 'Plataforma de gestão de eventos esportivos da Aomenos1km',
   icons: {
     icon: [
-      { url: '/favicon.svg', type: 'image/svg+xml' },
-      { url: '/favicon32x32.png', sizes: '32x32', type: 'image/png' },
-      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon.svg?v=2', type: 'image/svg+xml' },
+      { url: '/icon.svg?v=2', type: 'image/svg+xml' },
+      { url: '/favicon32x32.png?v=2', sizes: '32x32', type: 'image/png' },
     ],
-    shortcut: '/favicon.ico',
-    apple: '/favicon32x32.png',
+    shortcut: '/favicon.svg?v=2',
+    apple: '/favicon32x32.png?v=2',
   },
   openGraph: {
     title: TITLE_SITE_DEFAULT,

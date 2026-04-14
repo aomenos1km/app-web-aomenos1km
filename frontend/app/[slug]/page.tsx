@@ -1,6 +1,15 @@
 import { redirect } from 'next/navigation'
+import type { Metadata } from 'next'
+import { buildEventoMetadata, fetchEventoPublicoMetadata } from '@/lib/publico-metadata'
 
 type SlugParams = { slug: string }
+
+export async function generateMetadata({ params }: { params: SlugParams | Promise<SlugParams> }): Promise<Metadata> {
+  const resolved = await params
+  const slugRaw = String(resolved?.slug || '').trim()
+  const evento = await fetchEventoPublicoMetadata({ slug: slugRaw })
+  return buildEventoMetadata(evento, `/${encodeURIComponent(slugRaw)}`)
+}
 
 export default async function EventoSlugPage({ params }: { params: SlugParams | Promise<SlugParams> }) {
   const resolved = await params
