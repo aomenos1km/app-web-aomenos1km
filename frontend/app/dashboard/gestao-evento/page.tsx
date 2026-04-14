@@ -1129,6 +1129,21 @@ export default function GestaoEventoPage() {
                   </span>
                   <span className="truncate text-xs text-zinc-500">{nomeArquivoCapa}</span>
                 </label>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">
+                    Remova a capa para voltar a usar a arte padrão automaticamente.
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRemoverCapa}
+                    disabled={!canManageEventoSelecionado || uploadingCapa || salvandoCheckout || !formCheckout.capa_url}
+                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  >
+                    <Trash2 className="mr-1 h-4 w-4" /> Remover capa
+                  </Button>
+                </div>
                 {uploadingCapa ? <p className="text-xs text-muted-foreground">Enviando capa...</p> : null}
                 {formCheckout.capa_url ? (
                   <div className="mt-2 rounded border bg-muted/20 p-3">
@@ -1299,21 +1314,6 @@ export default function GestaoEventoPage() {
                   </RTableBody>
                 </RTable>
               )}
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                            <span className="text-muted-foreground">
-                              Remova a capa para voltar a usar a arte padrão automaticamente.
-                            </span>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={handleRemoverCapa}
-                              disabled={!canManageEventoSelecionado || uploadingCapa || salvandoCheckout || !formCheckout.capa_url}
-                              className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                            >
-                              <Trash2 className="mr-1 h-4 w-4" /> Remover capa
-                            </Button>
-                          </div>
             </CardContent>
           </Card>
         </>
