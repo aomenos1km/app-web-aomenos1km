@@ -1222,21 +1222,6 @@ export default function GestaoEventoPage() {
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
                                 <path d="M12 2a5 5 0 00-5 5v3H6a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2v-8a2 2 0 00-2-2h-1V7a5 5 0 00-5-5zm-3 8V7a3 3 0 116 0v3H9z"/>
                               </svg>
-                              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                <span className="text-muted-foreground">
-                                  Remova a capa para voltar a usar a arte padr\u00e3o automaticamente.
-                                </span>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={handleRemoverCapa}
-                                  disabled={!canManageEventoSelecionado || uploadingCapa || salvandoCheckout || !formCheckout.capa_url}
-                                  className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                                >
-                                  <Trash2 className="mr-1 h-4 w-4" /> Remover capa
-                                </Button>
-                              </div>
                             </span>
                           )}
                         </RTableCell>
@@ -1268,6 +1253,21 @@ export default function GestaoEventoPage() {
                               </button>
                             )
                           })()}
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                  <span className="text-muted-foreground">
+                                    Remova a capa para voltar a usar a arte padrão automaticamente.
+                                  </span>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleRemoverCapa}
+                                    disabled={!canManageEventoSelecionado || uploadingCapa || salvandoCheckout || !formCheckout.capa_url}
+                                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                  >
+                                    <Trash2 className="mr-1 h-4 w-4" /> Remover capa
+                                  </Button>
+                                </div>
                         </RTableCell>
                         <RTableCell>
                           <span className="inline-flex rounded-full border border-orange-500 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-orange-600">
