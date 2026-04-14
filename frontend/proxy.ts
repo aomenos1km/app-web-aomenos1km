@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const PUBLIC_PATHS = ['/login', '/publico']
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   // Permite rotas públicas e arquivos estáticos
@@ -10,8 +10,8 @@ export function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // O JWT é guardado em sessionStorage (client-side) — o middleware não 
-  // tem acesso direto. Usamos um cookie leve apenas para o middleware.
+  // O JWT é guardado em sessionStorage (client-side) — o proxy nao
+  // tem acesso direto. Usamos um cookie leve apenas para essa camada.
   const token = req.cookies.get('auth_token')?.value
 
   if (!pathname.startsWith('/dashboard')) {

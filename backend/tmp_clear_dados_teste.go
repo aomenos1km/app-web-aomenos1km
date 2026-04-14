@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,27 +55,66 @@ func main() {
 	}
 	defer tx.Rollback(context.Background())
 
-	statements := []string{
-		"DELETE FROM proposta_itens",
-		"DELETE FROM notificacoes WHERE proposta_id IS NOT NULL",
-		"DELETE FROM propostas",
-		"DELETE FROM orcamentos_publicos",
-		"DELETE FROM notificacoes WHERE contrato_id IS NOT NULL",
-		"DELETE FROM participantes",
-		"DELETE FROM contratos",
-		"DELETE FROM empresas",
-		"ALTER SEQUENCE IF EXISTS participantes_numero_inscricao_seq RESTART WITH 1",
+	var usuariosAntes int
+	if err := tx.QueryRow(context.Background(), `SELECT COUNT(*) FROM usuarios`).Scan(&usuariosAntes); err != nil {
+		panic(err)
 	}
 
-	for _, sql := range statements {
-		if _, err := tx.Exec(context.Background(), sql); err != nil {
+	rows, err := tx.Query(context.Background(), `
+		SELECT tablename
+		FROM pg_tables
+		WHERE schemaname = 'public'
+		  AND tablename <> 'usuarios'
+		ORDER BY tablename
+	`)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+
+	tabelas := make([]string, 0)
+	for rows.Next() {
+		var tabela string
+		if err := rows.Scan(&tabela); err != nil {
 			panic(err)
 		}
+		tabelas = append(tabelas, tabela)
+	}
+	if err := rows.Err(); err != nil {
+		panic(err)
+	}
+
+	if len(tabelas) == 0 {
+		fmt.Println("Nenhuma tabela pública encontrada para limpar (além de usuarios)")
+		return
+	}
+
+	quoted := make([]string, 0, len(tabelas))
+	for _, tabela := range tabelas {
+		quoted = append(quoted, fmt.Sprintf(`"%s"`, strings.ReplaceAll(tabela, `"`, `""`)))
+	}
+	sort.Strings(quoted)
+
+	sql := "TRUNCATE TABLE " + strings.Join(quoted, ", ") + " RESTART IDENTITY CASCADE"
+	if _, err := tx.Exec(context.Background(), sql); err != nil {
+		panic(err)
+	}
+
+	var usuariosDepois int
+	if err := tx.QueryRow(context.Background(), `SELECT COUNT(*) FROM usuarios`).Scan(&usuariosDepois); err != nil {
+		panic(err)
+	}
+
+	var adminExiste bool
+	if err := tx.QueryRow(context.Background(), `SELECT EXISTS(SELECT 1 FROM usuarios WHERE LOWER(login) = 'admin')`).Scan(&adminExiste); err != nil {
+		panic(err)
 	}
 
 	if err := tx.Commit(context.Background()); err != nil {
 		panic(err)
 	}
 
-	fmt.Println("OK: propostas, orcamentos_publicos, contratos, participantes e empresas limpos")
+	fmt.Printf("OK: banco limpo preservando usuarios. Tabelas truncadas: %d\n", len(tabelas))
+	fmt.Printf("Usuarios preservados: %d -> %d\n", usuariosAntes, usuariosDepois)
+	fmt.Printf("Login admin existe: %t\n", adminExiste)
 }

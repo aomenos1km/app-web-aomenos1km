@@ -1,0 +1,5 @@
+ALTER TABLE contratos
+ADD COLUMN IF NOT EXISTS hora_chegada VARCHAR(5);
+
+ALTER TABLE propostas
+ADD COLUMN IF NOT EXISTS hora_chegada VARCHAR(5);

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
 import { contratos, participantes, type Contrato, type Participante } from '@/lib/api'
+import { formatCPF } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -172,6 +173,7 @@ export default function HistoricoPage() {
   const [loadingEventos, setLoadingEventos] = useState(true)
   const [loadingParticipantes, setLoadingParticipantes] = useState(false)
   const [filtroEvento, setFiltroEvento] = useState('')
+  const [somenteRetroativos, setSomenteRetroativos] = useState(false)
   const [buscaTabela, setBuscaTabela] = useState('')
   const [origemFiltro, setOrigemFiltro] = useState<OrigemFiltro>('todas')
   const [somenteQuentes, setSomenteQuentes] = useState(false)
@@ -182,16 +184,36 @@ export default function HistoricoPage() {
   const [participanteSelecionado, setParticipanteSelecionado] = useState<Participante | null>(null)
   const [abaModal, setAbaModal] = useState<HistoricoTab>('dados')
 
+  function resetFiltrosParticipantes() {
+    setBuscaTabela('')
+    setOrigemFiltro('todas')
+    setSomenteQuentes(false)
+    setPaginaAtual(1)
+  }
+
+  function handleEventoSelecionadoChange(nextId: string) {
+    setEventoSelecionadoId(nextId)
+    setParticipanteSelecionado(null)
+    resetFiltrosParticipantes()
+
+    if (!nextId) {
+      setListaParticipantes([])
+      setLoadingParticipantes(false)
+      return
+    }
+
+    setLoadingParticipantes(true)
+  }
+
   useEffect(() => {
     let ativo = true
-    setLoadingEventos(true)
 
     contratos
       .listar()
       .then(response => {
         if (!ativo) return
         const historico = (response.data ?? [])
-          .filter(evento => isEventoRealizado(evento.data_evento) && Number(evento.qtd_inscritos || 0) > 0)
+          .filter(evento => isEventoRealizado(evento.data_evento) && (Number(evento.qtd_inscritos || 0) > 0 || isRetroativoContrato(evento)))
           .sort((a, b) => String(b.data_evento || '').localeCompare(String(a.data_evento || '')))
         setEventos(historico)
       })
@@ -216,6 +238,7 @@ export default function HistoricoPage() {
         : empresaEhAomenos1km(evento.empresa_nome)
 
       if (!combinaModo) return false
+      if (somenteRetroativos && !isRetroativoContrato(evento)) return false
       if (!termo) return true
 
       const texto = normalizeText(
@@ -224,29 +247,12 @@ export default function HistoricoPage() {
 
       return texto.includes(termo)
     })
-  }, [eventos, filtroEvento, modo])
-
-  useEffect(() => {
-    if (!eventoSelecionadoId) return
-    if (eventosFiltrados.some(evento => evento.id === eventoSelecionadoId)) return
-
-    setEventoSelecionadoId('')
-    setListaParticipantes([])
-    setBuscaTabela('')
-    setOrigemFiltro('todas')
-    setSomenteQuentes(false)
-    setPaginaAtual(1)
-  }, [eventoSelecionadoId, eventosFiltrados])
+  }, [eventos, filtroEvento, modo, somenteRetroativos])
 
   useEffect(() => {
     if (!eventoSelecionadoId) return
 
     let ativo = true
-    setLoadingParticipantes(true)
-    setBuscaTabela('')
-    setOrigemFiltro('todas')
-    setSomenteQuentes(false)
-    setPaginaAtual(1)
 
     participantes
       .listarPorContrato(eventoSelecionadoId)
@@ -289,15 +295,12 @@ export default function HistoricoPage() {
   }, [buscaTabela, listaParticipantes, origemFiltro, somenteQuentes])
 
   const totalPaginas = Math.max(1, Math.ceil(participantesFiltrados.length / ITENS_POR_PAGINA))
-
-  useEffect(() => {
-    setPaginaAtual(prev => Math.min(prev, totalPaginas))
-  }, [totalPaginas])
+  const paginaAtualAjustada = Math.min(paginaAtual, totalPaginas)
 
   const participantesPaginados = useMemo(() => {
-    const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA
+    const inicio = (paginaAtualAjustada - 1) * ITENS_POR_PAGINA
     return participantesFiltrados.slice(inicio, inicio + ITENS_POR_PAGINA)
-  }, [paginaAtual, participantesFiltrados])
+  }, [paginaAtualAjustada, participantesFiltrados])
 
   const resumoOrigem = useMemo(() => {
     const total = listaParticipantes.length
@@ -331,10 +334,10 @@ export default function HistoricoPage() {
 
   const infoPaginacao = useMemo(() => {
     if (participantesFiltrados.length === 0) return 'Mostrando 0 de 0'
-    const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA + 1
-    const fim = Math.min(paginaAtual * ITENS_POR_PAGINA, participantesFiltrados.length)
+    const inicio = (paginaAtualAjustada - 1) * ITENS_POR_PAGINA + 1
+    const fim = Math.min(paginaAtualAjustada * ITENS_POR_PAGINA, participantesFiltrados.length)
     return `Mostrando ${inicio} a ${fim} de ${participantesFiltrados.length}`
-  }, [paginaAtual, participantesFiltrados.length])
+  }, [paginaAtualAjustada, participantesFiltrados.length])
 
   function baixarListaCompleta() {
     if (!eventoSelecionado || listaParticipantes.length === 0) {
@@ -503,7 +506,7 @@ export default function HistoricoPage() {
             <select
               className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
               value={eventoSelecionadoId}
-              onChange={event => setEventoSelecionadoId(event.target.value)}
+              onChange={event => handleEventoSelecionadoChange(event.target.value)}
               disabled={loadingEventos || eventosFiltrados.length === 0}
             >
               <option value="">{loadingEventos ? 'Carregando eventos...' : 'Selecione um evento...'}</option>
@@ -513,6 +516,18 @@ export default function HistoricoPage() {
                 </option>
               ))}
             </select>
+          </div>
+          <div className="md:col-span-12">
+            <button
+              type="button"
+              onClick={() => {
+                setSomenteRetroativos(prev => !prev)
+                setPaginaAtual(1)
+              }}
+              className={`inline-flex h-10 items-center rounded-lg border px-4 text-sm font-bold transition ${somenteRetroativos ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300'}`}
+            >
+              Mostrar somente eventos retroativos
+            </button>
           </div>
         </CardContent>
       </Card>
@@ -820,7 +835,7 @@ export default function HistoricoPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={paginaAtual <= 1}
+                    disabled={paginaAtualAjustada <= 1}
                     onClick={() => setPaginaAtual(prev => Math.max(1, prev - 1))}
                   >
                     <ChevronLeft className="mr-1 h-4 w-4" />
@@ -830,7 +845,7 @@ export default function HistoricoPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={paginaAtual >= totalPaginas}
+                    disabled={paginaAtualAjustada >= totalPaginas}
                     onClick={() => setPaginaAtual(prev => Math.min(totalPaginas, prev + 1))}
                   >
                     Próximo
@@ -944,7 +959,7 @@ export default function HistoricoPage() {
                     </div>
                     <div className="md:col-span-6">
                       <label className="mb-1 block text-sm font-semibold text-zinc-700">CPF</label>
-                      <Input value={participanteSelecionado.cpf || ''} readOnly />
+                      <Input value={formatCPF(participanteSelecionado.cpf)} readOnly />
                     </div>
                     <div className="md:col-span-6">
                       <label className="mb-1 block text-sm font-semibold text-zinc-700">Nascimento</label>

@@ -15,6 +15,7 @@ function getDashboardTitle(pathname: string) {
     ['/dashboard/configuracoes', 'Configurações'],
     ['/dashboard/contratos', 'Contratos'],
     ['/dashboard/empresas', 'Empresas'],
+    ['/dashboard/financeiro-contratos', 'Financeiro de Contratos'],
     ['/dashboard/fornecedores', 'Fornecedores'],
     ['/dashboard/gestao-evento', 'Gestão do Evento'],
     ['/dashboard/historico-propostas', 'Histórico de Propostas'],

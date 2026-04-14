@@ -11,6 +11,7 @@ type Contrato struct {
 	Descricao     string    `json:"descricao" db:"descricao"`
 	ValorTotal    float64   `json:"valor_total" db:"valor_total"`
 	DataEvento    *string   `json:"data_evento" db:"data_evento"`
+	HoraChegada   string    `json:"hora_chegada" db:"hora_chegada"`
 	LocalID       *string   `json:"local_id" db:"local_id"`
 	LocalNome     string    `json:"local_nome" db:"local_nome"`
 	Modalidade    string    `json:"modalidade" db:"modalidade"`
@@ -34,7 +35,8 @@ type Contrato struct {
 	AtualizadoEm  time.Time `json:"atualizado_em" db:"atualizado_em"`
 
 	// Campos extras (JOINs ou computados)
-	QtdInscritos int `json:"qtd_inscritos,omitempty" db:"qtd_inscritos"`
+	QtdInscritos       int    `json:"qtd_inscritos,omitempty" db:"qtd_inscritos"`
+	ResponsavelEmpresa string `json:"responsavel_empresa,omitempty" db:"responsavel_empresa"`
 }
 
 // ContratoInput payload para criar/editar contrato
@@ -44,6 +46,7 @@ type ContratoInput struct {
 	Descricao     string   `json:"descricao"`
 	ValorTotal    float64  `json:"valor_total"`
 	DataEvento    *string  `json:"data_evento"`
+	HoraChegada   string   `json:"hora_chegada"`
 	LocalID       *string  `json:"local_id"`
 	LocalNome     string   `json:"local_nome"`
 	Modalidade    string   `json:"modalidade"`
@@ -71,19 +74,37 @@ type ContratoStatusInput struct {
 
 // ContratoRetroativoInput payload para cadastrar eventos passados sem passar pelo gerador
 type ContratoRetroativoInput struct {
-	EmpresaNome         string  `json:"empresa_nome" binding:"required"`
-	NomeEvento          string  `json:"nome_evento" binding:"required"`
-	DataEvento          string  `json:"data_evento" binding:"required"`
-	LocalID             *string `json:"local_id"`
-	LocalNome           string  `json:"local_nome"`
-	LocalNaoCadastrado  bool    `json:"local_nao_cadastrado"`
-	Modalidade          string  `json:"modalidade"`
-	QtdContratada       int     `json:"qtd_contratada"`
-	ValorTotal          float64 `json:"valor_total"`
-	ValorPago           float64 `json:"valor_pago"`
-	KM                  string  `json:"km"`
-	Consultor           string  `json:"consultor"`
-	Observacoes         string  `json:"observacoes"`
+	EmpresaNome        string  `json:"empresa_nome" binding:"required"`
+	TipoPessoa         string  `json:"tipo_pessoa"`
+	Documento          string  `json:"documento"`
+	NomeFantasia       string  `json:"nome_fantasia"`
+	Responsavel        string  `json:"responsavel"`
+	Email              string  `json:"email"`
+	CidadeCliente      string  `json:"cidade_cliente"`
+	UFCliente          string  `json:"uf_cliente"`
+	NomeEvento         string  `json:"nome_evento" binding:"required"`
+	DataEvento         string  `json:"data_evento" binding:"required"`
+	HoraChegada        string  `json:"hora_chegada"`
+	LocalID            *string `json:"local_id"`
+	LocalNome          string  `json:"local_nome"`
+	LocalNaoCadastrado bool    `json:"local_nao_cadastrado"`
+	LocalCEP           string  `json:"local_cep"`
+	LocalLogradouro    string  `json:"local_logradouro"`
+	LocalNumero        string  `json:"local_numero"`
+	LocalComplemento   string  `json:"local_complemento"`
+	LocalBairro        string  `json:"local_bairro"`
+	LocalCidade        string  `json:"local_cidade"`
+	LocalUF            string  `json:"local_uf"`
+	LocalCapacidadeMax *int    `json:"local_capacidade_maxima"`
+	LocalResponsavel   string  `json:"local_responsavel"`
+	LocalWhatsapp      string  `json:"local_whatsapp"`
+	Modalidade         string  `json:"modalidade"`
+	QtdContratada      int     `json:"qtd_contratada"`
+	ValorTotal         float64 `json:"valor_total"`
+	ValorPago          float64 `json:"valor_pago"`
+	KM                 string  `json:"km"`
+	Consultor          string  `json:"consultor"`
+	Observacoes        string  `json:"observacoes"`
 }
 
 // ContratoPublico dados mínimos expostos ao formulário público de check-in
@@ -93,6 +114,7 @@ type ContratoPublico struct {
 	NomeEvento      string   `json:"nome_evento"`
 	ValorTotal      float64  `json:"valor_total"`
 	DataEvento      *string  `json:"data_evento"`
+	HoraChegada     string   `json:"hora_chegada"`
 	LocalNome       string   `json:"local_nome"`
 	Modalidade      string   `json:"modalidade"`
 	LinkGateway     string   `json:"link_gateway"`

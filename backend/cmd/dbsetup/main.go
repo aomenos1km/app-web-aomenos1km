@@ -44,6 +44,9 @@ func main() {
 		filepath.Join("..", "..", "..", "migrations", "015_catalogo_owner_permissions.sql"),
 		filepath.Join("..", "..", "..", "migrations", "016_metas_mensais.sql"),
 		filepath.Join("..", "..", "..", "migrations", "017_lista_transmissao.sql"),
+		filepath.Join("..", "..", "..", "migrations", "018_inscricoes_genero_dependentes.sql"),
+		filepath.Join("..", "..", "..", "migrations", "019_hora_chegada_eventos.sql"),
+		filepath.Join("..", "..", "..", "migrations", "020_financeiro_contratos_e_pagamentos.sql"),
 	}
 
 	for _, file := range files {

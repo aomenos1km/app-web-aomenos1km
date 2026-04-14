@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
 import { useTheme } from 'next-themes'
 import { cn } from '@/lib/utils'
@@ -13,18 +13,13 @@ interface BrandLogoProps {
 
 export default function BrandLogo({ className, imageClassName, compact = false }: BrandLogoProps) {
   const { theme, resolvedTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-  const [src, setSrc] = useState('/logo-aomenos1km.png')
-  
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-  
-  useEffect(() => {
-    if (!mounted) return
-    const isDark = theme === 'dark' || (theme === 'system' && resolvedTheme === 'dark')
-    setSrc(isDark ? '/logo-aomenos1km-branco-transparente.png' : '/logo-aomenos1km.png')
-  }, [theme, resolvedTheme, mounted])
+  const [fallbackSvg, setFallbackSvg] = useState(false)
+  const isDark = theme === 'dark' || (theme === 'system' && resolvedTheme === 'dark')
+  const src = fallbackSvg
+    ? '/logo-aomenos1km.svg'
+    : isDark
+      ? '/logo-aomenos1km-branco-transparente.png'
+      : '/logo-aomenos1km.png'
 
   const wrapperSize = compact ? 'h-[52px] w-[132px]' : 'h-[86px] w-[220px]'
 
@@ -36,7 +31,7 @@ export default function BrandLogo({ className, imageClassName, compact = false }
         fill
         sizes={compact ? '132px' : '220px'}
         priority
-        onError={() => setSrc('/logo-aomenos1km.svg')}
+        onError={() => setFallbackSvg(true)}
         className={cn('object-contain', imageClassName)}
       />
     </div>

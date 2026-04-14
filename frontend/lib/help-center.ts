@@ -171,6 +171,14 @@ export const HELP_SECTIONS: HelpSection[] = [
     topics: [],
   },
   {
+    id: 'financeiro-contratos',
+    category: 'FINANCEIRO',
+    label: 'Financeiro de Contratos',
+    route: '/dashboard/financeiro-contratos',
+    icon: CircleDollarSign,
+    topics: [],
+  },
+  {
     id: 'config',
     category: 'CONFIGURAÇÕES',
     label: 'Configurações',

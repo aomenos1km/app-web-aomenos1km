@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Pencil, Plus, Trash2, Users, Lock } from 'lucide-react'
-import { usuariosEquipe, type UsuarioEquipe, type UsuarioEquipeInput } from '@/lib/api'
+import { auth, usuariosEquipe, type UsuarioEquipe, type UsuarioEquipeInput } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,6 +20,9 @@ type FormState = {
   login: string
   email: string
   senha: string
+  senha_atual: string
+  nova_senha: string
+  confirmar_nova_senha: string
   perfil: 'Admin' | 'Consultor' | 'Visualizador'
   ativo: boolean
   comissao_percent: number
@@ -30,6 +33,9 @@ const formInicial: FormState = {
   login: '',
   email: '',
   senha: '',
+  senha_atual: '',
+  nova_senha: '',
+  confirmar_nova_senha: '',
   perfil: 'Consultor',
   ativo: true,
   comissao_percent: 0,
@@ -48,6 +54,7 @@ export default function UsuariosEquipePage() {
   const [form, setForm] = useState<FormState>(formInicial)
 
   const editando = Boolean(form.id)
+  const editandoPropriaConta = editando && form.id === user?.id
 
   const admins = useMemo(() => lista.filter(u => u.perfil === 'Admin'), [lista])
   const equipe = useMemo(() => lista.filter(u => u.perfil !== 'Admin'), [lista])
@@ -89,6 +96,9 @@ export default function UsuariosEquipePage() {
       login: usuario.login,
       email: usuario.email || '',
       senha: '',
+      senha_atual: '',
+      nova_senha: '',
+      confirmar_nova_senha: '',
       perfil: usuario.perfil,
       ativo: usuario.ativo,
       comissao_percent: Number(usuario.comissao_percent || 0),
@@ -119,6 +129,24 @@ export default function UsuariosEquipePage() {
       return
     }
 
+    if (editandoPropriaConta) {
+      const querAlterarSenha = form.nova_senha.trim().length > 0 || form.confirmar_nova_senha.trim().length > 0 || form.senha_atual.trim().length > 0
+      if (querAlterarSenha) {
+        if (!form.senha_atual.trim()) {
+          toast.error('Informe sua senha atual para alterar a senha')
+          return
+        }
+        if (form.nova_senha.trim().length < 6) {
+          toast.error('A nova senha deve ter ao menos 6 caracteres')
+          return
+        }
+        if (form.nova_senha !== form.confirmar_nova_senha) {
+          toast.error('A confirmação da nova senha não confere')
+          return
+        }
+      }
+    }
+
     if (form.comissao_percent < 0 || form.comissao_percent > 100) {
       toast.error('Comissão deve estar entre 0 e 100')
       return
@@ -130,13 +158,18 @@ export default function UsuariosEquipePage() {
         const payload: UsuarioEquipeInput = {
           nome: form.nome.trim(),
           login: form.login.trim(),
-          senha: form.senha.trim() || undefined,
+          senha: !editandoPropriaConta ? (form.senha.trim() || undefined) : undefined,
           email: form.email.trim(),
           perfil: form.perfil,
           ativo: form.ativo,
           comissao_percent: form.comissao_percent,
         }
         await usuariosEquipe.atualizar(form.id, payload)
+
+        if (editandoPropriaConta && form.nova_senha.trim()) {
+          await auth.alterarSenha(form.senha_atual.trim(), form.nova_senha.trim())
+        }
+
         toast.success('Usuário atualizado com sucesso')
       } else {
         await usuariosEquipe.criar({
@@ -242,18 +275,56 @@ export default function UsuariosEquipePage() {
                 <Label htmlFor="login">Login de Acesso</Label>
                 <Input id="login" value={form.login} onChange={e => setForm(p => ({ ...p, login: e.target.value }))} required />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="senha">Senha</Label>
-                <Input
-                  id="senha"
-                  type="password"
-                  placeholder={editando ? 'Deixe em branco para manter' : 'Mínimo 6 caracteres'}
-                  value={form.senha}
-                  onChange={e => setForm(p => ({ ...p, senha: e.target.value }))}
-                  required={!editando}
-                />
-              </div>
+              {editandoPropriaConta ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="senha_atual">Senha Atual</Label>
+                  <Input
+                    id="senha_atual"
+                    type="password"
+                    placeholder="Obrigatória para trocar a senha"
+                    value={form.senha_atual}
+                    onChange={e => setForm(p => ({ ...p, senha_atual: e.target.value }))}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="senha">Senha</Label>
+                  <Input
+                    id="senha"
+                    type="password"
+                    placeholder={editando ? 'Deixe em branco para manter' : 'Mínimo 6 caracteres'}
+                    value={form.senha}
+                    onChange={e => setForm(p => ({ ...p, senha: e.target.value }))}
+                    required={!editando}
+                  />
+                </div>
+              )}
             </div>
+
+            {editandoPropriaConta && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="nova_senha">Nova Senha</Label>
+                  <Input
+                    id="nova_senha"
+                    type="password"
+                    placeholder="Mínimo 6 caracteres"
+                    value={form.nova_senha}
+                    onChange={e => setForm(p => ({ ...p, nova_senha: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="confirmar_nova_senha">Confirmar Nova Senha</Label>
+                  <Input
+                    id="confirmar_nova_senha"
+                    type="password"
+                    placeholder="Repita a nova senha"
+                    value={form.confirmar_nova_senha}
+                    onChange={e => setForm(p => ({ ...p, confirmar_nova_senha: e.target.value }))}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="email">E-mail de Contato</Label>
@@ -272,7 +343,6 @@ export default function UsuariosEquipePage() {
                 >
                   <option value="Admin">Administrador</option>
                   <option value="Consultor">Consultor</option>
-                  <option value="Visualizador">Visualizador</option>
                 </select>
               </div>
 

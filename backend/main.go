@@ -30,7 +30,9 @@ func loadLocalEnv() {
 			val := strings.TrimSpace(parts[1])
 			val = strings.Trim(val, "\"")
 			if key != "" {
-				_ = os.Setenv(key, val)
+				if _, exists := os.LookupEnv(key); !exists {
+					_ = os.Setenv(key, val)
+				}
 			}
 		}
 		return
@@ -122,6 +124,7 @@ func main() {
 		public.GET("/eventos/publico/slug/:slug", api.BuscarContratoPublicoPorSlug)
 		public.POST("/participantes/checkin", api.CriarParticipante)
 		public.GET("/participantes/:id/status-pagamento", api.VerificarStatusPagamento)
+		public.GET("/participantes/validar-duplicacao", api.ValidarDuplicacaoCPF)
 
 		// Formulário público de orçamento
 		public.POST("/orcamentos/publico", api.ReceberOrcamentoPublico)
@@ -218,12 +221,19 @@ func main() {
 		protected.GET("/dashboard", api.GetDashboard)
 		protected.GET("/transmissao/inscricoes", api.ListarInscricoesTransmissao)
 		protected.GET("/dashboard/meta-mensal", api.GetMetaMensal)
+		protected.GET("/dashboard/metas", api.ListarMetasMensais)
 		protected.GET("/dashboard/tendencia-6-meses", api.GetTendencia6Meses)
 		protected.GET("/dashboard/ranking-consultores", api.GetRankingConsultores)
 		protected.GET("/dashboard/ranking-eventos", api.GetRankingEventos)
 		protected.GET("/dashboard/performance-orcamentos-vendas", api.GetPerformanceOrcamentosVendas)
+		protected.GET("/financeiro/contratos/resumo", api.BuscarResumoFinanceiroContratos)
+		protected.GET("/financeiro/parcelas", api.ListarParcelasFinanceiro)
+		protected.PUT("/financeiro/parcelas/:id/baixa", api.DarBaixaParcela)
 		protected.GET("/comissoes/extrato", api.ListarExtratoComissoes)
 		protected.PUT("/comissoes/:id/pagar", api.MarcarComissaoPaga)
+		protected.GET("/contratos/:id/parcelas", api.ListarParcelasContrato)
+		protected.PUT("/contratos/:id/parcelas", api.SalvarParcelasContrato)
+		protected.DELETE("/contratos/:id/parcelas", api.ExcluirParcelasContrato)
 		protected.GET("/configuracoes", api.BuscarConfiguracoesSistema)
 
 		// Storage (assinatura Cloudinary para upload direto)
@@ -240,6 +250,7 @@ func main() {
 		{
 			adminGroup.POST("/usuarios", api.CriarUsuario)
 			adminGroup.PUT("/configuracoes", api.SalvarConfiguracoesSistema)
+			adminGroup.PUT("/metas/:mes/:ano", api.SalvarMetaMensal)
 		}
 	}
 

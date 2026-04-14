@@ -192,13 +192,10 @@ export default function ContratoDetailPage() {
 
       {/* Participantes */}
       <Card className="gap-0 overflow-visible bg-transparent py-0 ring-0 shadow-none md:gap-4 md:overflow-hidden md:bg-card md:py-4 md:ring-1 md:shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle className="text-base">
             Participantes ({parts.length})
           </CardTitle>
-          <a href={publicFormUrl} target="_blank" rel="noopener noreferrer" className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>
-            <ExternalLink className="h-4 w-4 mr-1" /> Abrir Formulario Comercial
-          </a>
         </CardHeader>
         <CardContent className="p-0">
           {parts.length === 0 ? (

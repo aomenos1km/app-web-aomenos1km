@@ -6,7 +6,9 @@ import { toast } from 'sonner'
 import {
   dashboard,
   DashboardStats,
+  FinanceiroResumo,
   MetaMensal,
+  OrcamentoPendente,
   Tendencia,
   RankingConsultor,
   RankingEvento,
@@ -21,8 +23,12 @@ import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { ContratoDetalhesModal } from '@/components/dashboard/ContratoDetalhesModal'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   ArrowRight,
   BarChart3,
@@ -40,7 +46,6 @@ import {
   Target,
   TriangleAlert,
   Users,
-  XCircle,
 } from 'lucide-react'
 
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -64,6 +69,15 @@ function moeda(v: number) {
   return BRL.format(Number(v || 0))
 }
 
+function moedaMaskInput(v: number) {
+  return BRL.format(Number(v || 0))
+}
+
+function parseMoedaInput(value: string) {
+  const digits = String(value || '').replace(/\D/g, '')
+  return Number(digits || 0) / 100
+}
+
 function normalizeText(value: string) {
   return (value || '')
     .toLowerCase()
@@ -78,6 +92,15 @@ function stageFromStatus(status: string): 'confirmado' | 'negociacao' | 'aguarda
   if (s.includes('aguardando') || s.includes('pgto') || s.includes('pagamento') || s.includes('aprovado')) return 'aguardando'
   if (s.includes('negocia') || s.includes('proposta') || s.includes('lead') || s.includes('novo pedido') || s.includes('analise')) return 'negociacao'
   return 'outros'
+}
+
+function monthShortLabel(date: Date) {
+  return date.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')
+}
+
+function formatTrendMonthLabel(mes: number, ano: number) {
+  const d = new Date(ano, Math.max(0, mes - 1), 1)
+  return `${monthShortLabel(d)}/${ano}`
 }
 
 function dateInMonthYear(dateValue: string | undefined, mes: string, ano: string) {
@@ -106,7 +129,7 @@ export default function DashboardPage() {
   const { user } = useAuth()
   const isAdmin = user?.perfil === 'Admin'
 
-  const now = new Date()
+  const [now] = useState(() => new Date())
   const [ano, setAno] = useState(String(now.getFullYear()))
   const [mes, setMes] = useState(String(now.getMonth() + 1).padStart(2, '0'))
 
@@ -121,6 +144,17 @@ export default function DashboardPage() {
   const [rankingConsultores, setRankingConsultores] = useState<RankingConsultor[]>([])
   const [rankingEventos, setRankingEventos] = useState<RankingEvento[]>([])
   const [performanceConsultores, setPerformanceConsultores] = useState<PerformanceConsultor[]>([])
+  const [financeiroPeriodo, setFinanceiroPeriodo] = useState<'mes' | '3m' | 'ano' | '12m'>('mes')
+  const [financeiroTipo, setFinanceiroTipo] = useState<'comerciais' | 'retroativos' | 'todos'>('comerciais')
+  const [resumoFinanceiroApi, setResumoFinanceiroApi] = useState<FinanceiroResumo | null>(null)
+  const [modalContratoId, setModalContratoId] = useState<string | null>(null)
+  const [metaDialogOpen, setMetaDialogOpen] = useState(false)
+  const [savingMetaRapida, setSavingMetaRapida] = useState(false)
+  const [metaDraft, setMetaDraft] = useState({
+    meta_vendas: 0,
+    meta_contratos: 0,
+    descricao: '',
+  })
 
   const anoOptions = useMemo(() => {
     const end = now.getFullYear() + 1
@@ -133,27 +167,29 @@ export default function DashboardPage() {
   const carregar = useCallback(async () => {
     setLoading(true)
     try {
-      const [resStats, resContratos, resComissoes, resPendentes, resMetaMensal, resTendencia, resRankingConsultores, resRankingEventos, resPerformance] = await Promise.all([
+      const [resStats, resContratos, resComissoes, resPendentes, resMetaMensal, resTendencia, resRankingConsultores, resRankingEventos, resPerformance, resFinanceiro] = await Promise.all([
         dashboard.stats({ ano, mes }),
         contratos.listar(),
         comissoes.listarExtrato({ ano, mes }),
-        orcamentos.listarPendentes().catch(() => ({ data: [] as any[] })),
+        orcamentos.listarPendentes().catch(() => ({ data: [] as OrcamentoPendente[] })),
         dashboard.metaMensal({ ano, mes }),
         dashboard.tendencia6Meses(),
         dashboard.rankingConsultores({ ano, mes }),
         dashboard.rankingEventos({ ano, mes }),
         dashboard.performanceOrcamentosVendas({ ano, mes }),
+        dashboard.resumoFinanceiroContratos({ periodo: financeiroPeriodo, tipo: financeiroTipo }),
       ])
 
       setStats(resStats.data as DashboardStats)
       setListaContratos((resContratos.data as Contrato[]) || [])
       setExtratoComissao((resComissoes.data?.itens as ComissaoExtratoItem[]) || [])
-      setPedidosPendentes(Array.isArray((resPendentes as any).data) ? (resPendentes as any).data.length : 0)
+      setPedidosPendentes(Array.isArray(resPendentes.data) ? resPendentes.data.length : 0)
       setMetaMensal((resMetaMensal.data as MetaMensal) || null)
       setTendencia((resTendencia.data as Tendencia[]) || [])
       setRankingConsultores((resRankingConsultores.data as RankingConsultor[]) || [])
       setRankingEventos((resRankingEventos.data as RankingEvento[]) || [])
       setPerformanceConsultores((resPerformance.data as PerformanceConsultor[]) || [])
+      setResumoFinanceiroApi((resFinanceiro.data as FinanceiroResumo) || null)
       setUltimaAtualizacao(new Date())
     } catch {
       toast.error('Não foi possível carregar os indicadores do dashboard')
@@ -161,10 +197,11 @@ export default function DashboardPage() {
       setListaContratos([])
       setExtratoComissao([])
       setPedidosPendentes(0)
+      setResumoFinanceiroApi(null)
     } finally {
       setLoading(false)
     }
-  }, [ano, mes])
+  }, [ano, mes, financeiroPeriodo, financeiroTipo])
 
   useEffect(() => {
     void carregar()
@@ -174,28 +211,30 @@ export default function DashboardPage() {
   useEffect(() => {
     const carregarSilencioso = async () => {
       try {
-        const [resStats, resContratos, resComissoes, resPendentes, resMetaMensal, resTendencia, resRankingConsultores, resRankingEventos, resPerformance] = await Promise.all([
+        const [resStats, resContratos, resComissoes, resPendentes, resMetaMensal, resTendencia, resRankingConsultores, resRankingEventos, resPerformance, resFinanceiro] = await Promise.all([
           dashboard.stats({ ano, mes }),
           contratos.listar(),
           comissoes.listarExtrato({ ano, mes }),
-          orcamentos.listarPendentes().catch(() => ({ data: [] as any[] })),
+          orcamentos.listarPendentes().catch(() => ({ data: [] as OrcamentoPendente[] })),
           dashboard.metaMensal({ ano, mes }),
           dashboard.tendencia6Meses(),
           dashboard.rankingConsultores({ ano, mes }),
           dashboard.rankingEventos({ ano, mes }),
           dashboard.performanceOrcamentosVendas({ ano, mes }),
+          dashboard.resumoFinanceiroContratos({ periodo: financeiroPeriodo, tipo: financeiroTipo }),
         ])
 
         // Atualiza os dados sem mostrar loading
         setStats(resStats.data as DashboardStats)
         setListaContratos((resContratos.data as Contrato[]) || [])
         setExtratoComissao((resComissoes.data?.itens as ComissaoExtratoItem[]) || [])
-        setPedidosPendentes(Array.isArray((resPendentes as any).data) ? (resPendentes as any).data.length : 0)
+        setPedidosPendentes(Array.isArray(resPendentes.data) ? resPendentes.data.length : 0)
         setMetaMensal((resMetaMensal.data as MetaMensal) || null)
         setTendencia((resTendencia.data as Tendencia[]) || [])
         setRankingConsultores((resRankingConsultores.data as RankingConsultor[]) || [])
         setRankingEventos((resRankingEventos.data as RankingEvento[]) || [])
         setPerformanceConsultores((resPerformance.data as PerformanceConsultor[]) || [])
+        setResumoFinanceiroApi((resFinanceiro.data as FinanceiroResumo) || null)
         setUltimaAtualizacao(new Date())
       } catch {
         // Falha silenciosa - não mostra erro, apenas continua
@@ -207,7 +246,7 @@ export default function DashboardPage() {
     }, 30000) // 30 segundos
 
     return () => clearInterval(interval)
-  }, [ano, mes])
+  }, [ano, mes, financeiroPeriodo, financeiroTipo])
 
   const contratosPeriodo = useMemo(
     () => listaContratos.filter(c => dateInMonthYear(c.data_evento, mes, ano)),
@@ -319,6 +358,69 @@ export default function DashboardPage() {
     ]
   }, [resumoPeriodo])
 
+  const resumoFinanceiro = useMemo(() => {
+    const contratado = Number(resumoFinanceiroApi?.contratado || 0)
+    const recebido = Number(resumoFinanceiroApi?.recebido || 0)
+    const saldo = Number(resumoFinanceiroApi?.saldo || Math.max(contratado - recebido, 0))
+    const percentualRecebido = Number(resumoFinanceiroApi?.percentual_recebido || 0)
+    return {
+      contratado,
+      recebido,
+      saldo,
+      percentualRecebido,
+      totalContratos: Number(resumoFinanceiroApi?.total_contratos || 0),
+    }
+  }, [resumoFinanceiroApi])
+
+  const tendenciaFinanceira = useMemo(() => {
+    const series = (resumoFinanceiroApi?.series || []).map(row => ({
+      ...row,
+      contratado: Number(row.contratado || 0),
+      recebido: Number(row.recebido || 0),
+    }))
+
+    const maxValor = series.reduce((acc, row) => Math.max(acc, row.contratado, row.recebido), 1)
+    return { series, maxValor }
+  }, [resumoFinanceiroApi])
+
+  const abrirEdicaoMeta = useCallback(async () => {
+    if (!isAdmin) return
+    try {
+      const res = await dashboard.listarMetas(ano)
+      const metas = (res.data || []) as Array<{
+        mes: number
+        meta_vendas: number
+        meta_contratos: number
+        descricao: string
+      }>
+      const atual = metas.find(m => String(m.mes).padStart(2, '0') === mes)
+      setMetaDraft({
+        meta_vendas: Number(atual?.meta_vendas ?? metaMensal?.meta_vendas ?? 0),
+        meta_contratos: Number(atual?.meta_contratos ?? 0),
+        descricao: atual?.descricao || '',
+      })
+      setMetaDialogOpen(true)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Não foi possível carregar a meta para edição')
+    }
+  }, [ano, isAdmin, mes, metaMensal?.meta_vendas])
+
+  const salvarMetaRapida = useCallback(async () => {
+    if (!isAdmin) return
+    setSavingMetaRapida(true)
+    try {
+      await dashboard.salvarMeta(Number(mes), Number(ano), metaDraft)
+      const resMetaMensal = await dashboard.metaMensal({ ano, mes })
+      setMetaMensal((resMetaMensal.data as MetaMensal) || null)
+      setMetaDialogOpen(false)
+      toast.success('Meta mensal atualizada com sucesso')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao salvar meta mensal')
+    } finally {
+      setSavingMetaRapida(false)
+    }
+  }, [ano, isAdmin, mes, metaDraft])
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -414,6 +516,106 @@ export default function DashboardPage() {
         )}
       </div>
 
+      <Card className="border-2 border-[#f25c05]/20 bg-[#fff4eb] dark:bg-[#2b1a10]/65">
+        <CardHeader className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <HandCoins className="h-4 w-4 text-[#f25c05]" /> Resumo Financeiro (MVP)
+            </CardTitle>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={financeiroPeriodo} onValueChange={v => setFinanceiroPeriodo((v as 'mes' | '3m' | 'ano' | '12m') ?? 'mes')}>
+              <SelectTrigger className="w-[170px] bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700">
+                {financeiroPeriodo === 'mes' ? 'Mês atual' : financeiroPeriodo === '3m' ? 'Últimos 3 meses' : financeiroPeriodo === 'ano' ? 'Ano atual' : 'Últimos 12 meses'}
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="mes">Mês atual</SelectItem>
+                <SelectItem value="3m">Últimos 3 meses</SelectItem>
+                <SelectItem value="ano">Ano atual</SelectItem>
+                <SelectItem value="12m">Últimos 12 meses</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={financeiroTipo} onValueChange={v => setFinanceiroTipo((v as 'comerciais' | 'retroativos' | 'todos') ?? 'comerciais')}>
+              <SelectTrigger className="w-[170px] bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700">
+                {financeiroTipo === 'comerciais' ? 'Comerciais' : financeiroTipo === 'retroativos' ? 'Retroativos' : 'Todos os tipos'}
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="comerciais">Comerciais</SelectItem>
+                <SelectItem value="retroativos">Retroativos</SelectItem>
+                <SelectItem value="todos">Todos</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <p className="text-xs text-muted-foreground">
+              Base: {resumoFinanceiro.totalContratos} contrato(s) no recorte
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <Card className="border-l-4 border-l-emerald-500 bg-white dark:bg-slate-900/80">
+              <CardContent className="p-4">
+                <p className="text-xs font-bold uppercase text-muted-foreground">Total Contratado</p>
+                <p className="mt-2 text-2xl font-black text-emerald-700 break-words">{moeda(resumoFinanceiro.contratado)}</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-l-4 border-l-blue-500 bg-white dark:bg-slate-900/80">
+              <CardContent className="p-4">
+                <p className="text-xs font-bold uppercase text-muted-foreground">Total Recebido</p>
+                <p className="mt-2 text-2xl font-black text-blue-700 break-words">{moeda(resumoFinanceiro.recebido)}</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-l-4 border-l-amber-500 bg-white dark:bg-slate-900/80">
+              <CardContent className="p-4">
+                <p className="text-xs font-bold uppercase text-muted-foreground">Saldo a Receber</p>
+                <p className="mt-2 text-2xl font-black text-amber-700 break-words">{moeda(resumoFinanceiro.saldo)}</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-l-4 border-l-purple-500 bg-white dark:bg-slate-900/80">
+              <CardContent className="p-4">
+                <p className="text-xs font-bold uppercase text-muted-foreground">Percentual Recebido</p>
+                <p className="mt-2 text-2xl font-black text-purple-700 break-words">{resumoFinanceiro.percentualRecebido.toFixed(1)}%</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="bg-white dark:bg-slate-900/80">
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2"><Route className="h-4 w-4 text-[#f25c05]" /> Tendência mensal: Contratado x Recebido</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {tendenciaFinanceira.series.map(row => {
+                  const contratadoPct = (row.contratado / tendenciaFinanceira.maxValor) * 100
+                  const recebidoPct = (row.recebido / tendenciaFinanceira.maxValor) * 100
+
+                  return (
+                    <div key={row.key} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="font-semibold text-foreground">{row.label}</span>
+                        <span>Contratado {moeda(row.contratado)} · Recebido {moeda(row.recebido)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-2.5 rounded-full bg-emerald-500" style={{ width: `${Math.max(4, contratadoPct)}%` }} />
+                        <div className="h-2.5 rounded-full bg-blue-500" style={{ width: `${Math.max(4, recebidoPct)}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-2"><span className="h-2.5 w-6 rounded-full bg-emerald-500" /> Contratado</span>
+                <span className="inline-flex items-center gap-2"><span className="h-2.5 w-6 rounded-full bg-blue-500" /> Recebido</span>
+              </div>
+            </CardContent>
+          </Card>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card>
           <CardHeader>
@@ -481,7 +683,12 @@ export default function DashboardPage() {
                   const p = pct(ev.qtd_inscritos, ev.qtd_total)
                   const dias = daysUntil(ev.data_evento)
                   return (
-                    <Link key={ev.id} href={`/dashboard/contratos/${ev.id}?from=dashboard`} className="block rounded-xl border p-3 hover:bg-muted/40">
+                    <button
+                      key={ev.id}
+                      type="button"
+                      onClick={() => setModalContratoId(ev.id)}
+                      className="block w-full rounded-xl border p-3 text-left hover:bg-muted/40"
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate font-semibold">{ev.nome_evento}</p>
@@ -499,7 +706,7 @@ export default function DashboardPage() {
                         <span>{ev.qtd_inscritos}/{ev.qtd_total} inscritos</span>
                         <span>{p}% ocupação</span>
                       </div>
-                    </Link>
+                    </button>
                   )
                 })}
               </div>
@@ -533,7 +740,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <Card>
+      <Card className="border-[#f25c05]/30 bg-[#fff4eb] dark:bg-[#2b1a10]/65">
         <CardHeader>
           <CardTitle className="text-base">Ações rápidas de gestão</CardTitle>
         </CardHeader>
@@ -548,9 +755,17 @@ export default function DashboardPage() {
           ].map(item => {
             const Icon = item.icon
             return (
-              <Link key={item.href} href={item.href} className="rounded-xl border bg-card p-3 hover:bg-muted/50">
-                <Icon className="h-5 w-5 text-[#f25c05]" />
-                <p className="mt-2 text-sm font-semibold leading-tight">{item.label}</p>
+              <Link
+                key={item.href}
+                href={item.href}
+                className="group rounded-xl border border-orange-100/80 bg-white p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-[#f25c05]/70 hover:bg-orange-50 hover:shadow-[0_10px_22px_-14px_rgba(242,92,5,0.9)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f25c05]/40 dark:border-slate-700 dark:bg-slate-900/80 dark:hover:border-orange-500/60 dark:hover:bg-slate-900"
+              >
+                <span className="inline-flex rounded-md bg-orange-100/80 p-1.5 transition-colors group-hover:bg-[#f25c05]/20 dark:bg-orange-950/40 dark:group-hover:bg-orange-900/50">
+                  <Icon className="h-4.5 w-4.5 text-[#f25c05]" />
+                </span>
+                <p className="mt-2 text-sm font-semibold leading-tight transition-colors group-hover:text-[#b24604] dark:group-hover:text-orange-200">
+                  {item.label}
+                </p>
               </Link>
             )
           })}
@@ -562,28 +777,25 @@ export default function DashboardPage() {
           <CardTitle className="text-base flex items-center gap-2"><Clock3 className="h-4 w-4 text-[#f25c05]" /> Resumo do Período</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
             <div className="space-y-1">
-              <p className="text-xs font-bold uppercase text-muted-foreground">Período Selecionado</p>
-              <p className="text-lg font-semibold">{MONTH_OPTIONS.find(m => m.value === mes)?.label}</p>
-              <p className="text-sm text-muted-foreground">{ano}</p>
+              <p className="text-xs font-bold uppercase text-muted-foreground">Período</p>
+              <p className="text-lg font-semibold">{MONTH_OPTIONS.find(m => m.value === mes)?.label} {ano}</p>
             </div>
             <div className="space-y-1">
-              <p className="text-xs font-bold uppercase text-muted-foreground">Receita Total</p>
-              <p className="text-lg font-semibold text-emerald-700">{moeda(stats?.receita_total || 0)}</p>
-              <p className="text-xs text-muted-foreground">No período</p>
+              <p className="text-xs font-bold uppercase text-muted-foreground">Ticket Médio</p>
+              <p className="text-lg font-semibold text-cyan-600">{moeda(resumoPeriodo.ticketMedio)}</p>
+              <p className="text-xs text-muted-foreground">Por contrato confirmado</p>
             </div>
             <div className="space-y-1">
-              <p className="text-xs font-bold uppercase text-muted-foreground">Comissão Paga</p>
-              <p className="text-lg font-semibold text-[#ff6b0a]">{moeda(resumoComissao.totalPago)}</p>
-              <p className="text-xs text-muted-foreground">Já liberada</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs font-bold uppercase text-muted-foreground">Pendentes</p>
-              <p className="text-lg font-semibold text-rose-600">{resumoPeriodo.perdidos}</p>
-              <p className="text-xs text-muted-foreground">Cancelados/Expirados</p>
+              <p className="text-xs font-bold uppercase text-muted-foreground">Taxa de Conversão</p>
+              <p className="text-lg font-semibold text-blue-600">{resumoPeriodo.taxaConversao.toFixed(1)}%</p>
+              <p className="text-xs text-muted-foreground">De oportunidades captadas</p>
             </div>
           </div>
+          <p className="mt-4 text-xs text-muted-foreground border-t pt-4">
+            📌 Para análise completa de receita: veja &quot;Resumo Financeiro&quot;. Ele diferencia Contratado (valor total dos contratos) de Recebido (quanto já foi pago efetivamente).
+          </p>
         </CardContent>
       </Card>
 
@@ -596,7 +808,14 @@ export default function DashboardPage() {
           {metaMensal && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2"><Target className="h-4 w-4 text-[#f25c05]" /> Meta Mensal</CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-base flex items-center gap-2"><Target className="h-4 w-4 text-[#f25c05]" /> Meta Mensal</CardTitle>
+                  {isAdmin && (
+                    <Button variant="outline" size="sm" onClick={() => void abrirEdicaoMeta()}>
+                      Editar Meta
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -667,7 +886,7 @@ export default function DashboardPage() {
                         return (
                           <div key={`${item.ano}-${item.mes}`} className="space-y-1">
                             <div className="flex items-center justify-between">
-                              <span className="w-16 text-sm font-medium">{String(item.mes).padStart(2, '0')}/{item.ano}</span>
+                              <span className="w-20 text-sm font-medium">{formatTrendMonthLabel(item.mes, item.ano)}</span>
                               <div className="flex-1 mx-3">
                                 <div
                                   className={`h-8 rounded-lg flex items-center justify-end pr-3 text-xs font-bold text-white transition-all ${
@@ -872,6 +1091,59 @@ export default function DashboardPage() {
           </Card>
         )}
       </div>
+
+      <ContratoDetalhesModal
+        open={Boolean(modalContratoId)}
+        contratoId={modalContratoId}
+        onOpenChange={open => {
+          if (!open) setModalContratoId(null)
+        }}
+      />
+
+      <Dialog open={metaDialogOpen} onOpenChange={setMetaDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar Meta de {MONTH_OPTIONS.find(m => m.value === mes)?.label} / {ano}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Meta de Vendas</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={moedaMaskInput(metaDraft.meta_vendas)}
+                onChange={e => setMetaDraft(p => ({ ...p, meta_vendas: parseMoedaInput(e.target.value) }))}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div className="space-y-1.5">
+                <Label>Meta Contratos</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="1"
+                  value={metaDraft.meta_contratos}
+                  onChange={e => setMetaDraft(p => ({ ...p, meta_contratos: Number(e.target.value || 0) }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Descrição</Label>
+              <Input
+                value={metaDraft.descricao}
+                onChange={e => setMetaDraft(p => ({ ...p, descricao: e.target.value }))}
+                placeholder="Ex.: Meta comercial focada em eventos corporativos"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" onClick={() => setMetaDialogOpen(false)} disabled={savingMetaRapida}>Cancelar</Button>
+              <Button onClick={() => void salvarMetaRapida()} disabled={savingMetaRapida}>
+                {savingMetaRapida ? 'Salvando...' : 'Salvar meta'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { CheckCircle2, CircleDollarSign, Clock3, HandCoins, RefreshCcw } from 'lucide-react'
-import { comissoes, usuariosEquipe, type ComissaoExtratoItem, type UsuarioEquipe } from '@/lib/api'
+import { CheckCircle2, CircleDollarSign, Clock3, Eye, HandCoins, RefreshCcw } from 'lucide-react'
+import { comissoes, contratos, participantes, usuariosEquipe, type ComissaoExtratoItem, type Contrato, type Participante, type UsuarioEquipe } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -11,8 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { RTable, RTableBody, RTableCell, RTableHead, RTableHeader, RTableRow } from '@/components/ui/responsive-table'
 import { Badge } from '@/components/ui/badge'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Skeleton } from '@/components/ui/skeleton'
 
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
+type DetailTab = 'resumo' | 'participantes' | 'financeiro'
 
 function formatDate(value?: string | null): string {
   if (!value) return '-'
@@ -36,6 +39,11 @@ export default function ComissoesPage() {
   const [consultores, setConsultores] = useState<UsuarioEquipe[]>([])
 
   const [selectedContratoId, setSelectedContratoId] = useState<string | null>(null)
+  const [viewContratoId, setViewContratoId] = useState<string | null>(null)
+  const [viewContrato, setViewContrato] = useState<Contrato | null>(null)
+  const [viewParts, setViewParts] = useState<Participante[]>([])
+  const [viewLoading, setViewLoading] = useState(false)
+  const [detailTab, setDetailTab] = useState<DetailTab>('resumo')
   const [refreshKey, setRefreshKey] = useState(0)
 
   const selectedItem = useMemo(
@@ -119,6 +127,28 @@ export default function ComissoesPage() {
       window.removeEventListener('aomenos-refresh', bump)
     }
   }, [])
+
+  useEffect(() => {
+    if (!viewContratoId) {
+      setViewContrato(null)
+      setViewParts([])
+      setViewLoading(false)
+      return
+    }
+
+    setViewLoading(true)
+    Promise.all([contratos.buscar(viewContratoId), participantes.listarPorContrato(viewContratoId)])
+      .then(([contratoRes, participantesRes]) => {
+        setViewContrato((contratoRes.data || null) as Contrato | null)
+        setViewParts((participantesRes.data || []) as Participante[])
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : 'Não foi possível carregar os detalhes do contrato')
+        setViewContrato(null)
+        setViewParts([])
+      })
+      .finally(() => setViewLoading(false))
+  }, [viewContratoId])
 
   async function confirmarBaixa() {
     if (!selectedContratoId || !selectedItem) return
@@ -262,6 +292,7 @@ export default function ComissoesPage() {
                 <RTableHead>Evento / Empresa</RTableHead>
                 <RTableHead>Consultor</RTableHead>
                 <RTableHead>Status</RTableHead>
+                <RTableHead>Data de Baixa</RTableHead>
                 <RTableHead className="text-right">Venda</RTableHead>
                 <RTableHead className="text-right">%</RTableHead>
                 <RTableHead className="text-right">Comissão</RTableHead>
@@ -271,11 +302,11 @@ export default function ComissoesPage() {
             <RTableBody>
               {loading ? (
                 <RTableRow>
-                  <RTableCell colSpan={8} className="text-center text-muted-foreground py-8">Carregando extrato...</RTableCell>
+                  <RTableCell colSpan={9} className="text-center text-muted-foreground py-8">Carregando extrato...</RTableCell>
                 </RTableRow>
               ) : itens.length === 0 ? (
                 <RTableRow>
-                  <RTableCell colSpan={8} className="text-center text-muted-foreground py-8">Nenhuma comissão encontrada para o filtro selecionado.</RTableCell>
+                  <RTableCell colSpan={9} className="text-center text-muted-foreground py-8">Nenhuma comissão encontrada para o filtro selecionado.</RTableCell>
                 </RTableRow>
               ) : (
                 itens.map(item => {
@@ -290,27 +321,45 @@ export default function ComissoesPage() {
                       <RTableCell>{item.consultor || '-'}</RTableCell>
                       <RTableCell>
                         {pago ? (
-                          <Badge variant="secondary">Pago</Badge>
+                          <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">Pago</Badge>
                         ) : (
-                          <Badge variant="outline">Pendente</Badge>
+                          <Badge className="bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-100">Pendente</Badge>
                         )}
+                      </RTableCell>
+                      <RTableCell className="text-sm text-muted-foreground">
+                        {pago ? formatDate(item.comissao_data_pagamento) : '-'}
                       </RTableCell>
                       <RTableCell className="text-right tabular-nums">{BRL.format(item.valor_venda || 0)}</RTableCell>
                       <RTableCell className="text-right tabular-nums">{Number(item.comissao_percent || 0).toFixed(2)}%</RTableCell>
                       <RTableCell className="text-right tabular-nums font-medium">{BRL.format(item.valor_comissao || 0)}</RTableCell>
                       <RTableCell className="text-right">
-                        {pago ? (
-                          <span className="text-xs text-muted-foreground">Baixado</span>
-                        ) : (
+                        <div className="flex items-center justify-end gap-2">
                           <Button
                             size="sm"
-                            onClick={() => setSelectedContratoId(item.contrato_id)}
-                            disabled={!isAdmin}
-                            className="bg-[#f25c05] hover:bg-[#d84f00] text-white"
+                            variant="outline"
+                            onClick={() => {
+                              setDetailTab('resumo')
+                              setViewContratoId(item.contrato_id)
+                            }}
+                            title="Visualizar contrato"
                           >
-                            Pagar
+                            <Eye className="h-3.5 w-3.5" />
                           </Button>
-                        )}
+                          {pago ? (
+                            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
+                              <CheckCircle2 className="h-3 w-3 mr-1" /> Baixado
+                            </Badge>
+                          ) : (
+                            <Button
+                              size="sm"
+                              onClick={() => setSelectedContratoId(item.contrato_id)}
+                              disabled={!isAdmin}
+                              className="bg-[#f25c05] hover:bg-[#d84f00] text-white"
+                            >
+                              Pagar
+                            </Button>
+                          )}
+                        </div>
                       </RTableCell>
                     </RTableRow>
                   )
@@ -332,6 +381,178 @@ export default function ComissoesPage() {
         confirmLabel={salvando ? 'Salvando...' : 'Confirmar pagamento'}
         confirmDisabled={!isAdmin || salvando}
       />
+
+      <Dialog
+        open={Boolean(viewContratoId)}
+        onOpenChange={open => {
+          if (!open) {
+            setViewContratoId(null)
+            setDetailTab('resumo')
+          }
+        }}
+      >
+        <DialogContent className="max-h-[92vh] max-w-7xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="pr-8">{viewContrato?.nome_evento || 'Detalhes do contrato'}</DialogTitle>
+          </DialogHeader>
+
+          {viewLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-8 w-64" />
+              <Skeleton className="h-36 w-full" />
+              <Skeleton className="h-56 w-full" />
+            </div>
+          ) : !viewContrato ? (
+            <p className="text-sm text-muted-foreground">Contrato não encontrado.</p>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">{formatDate(viewContrato.data_evento)}</p>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="inline-flex rounded-lg border p-1">
+                  <Button
+                    size="sm"
+                    variant={detailTab === 'resumo' ? 'default' : 'ghost'}
+                    onClick={() => setDetailTab('resumo')}
+                  >
+                    Resumo
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={detailTab === 'participantes' ? 'default' : 'ghost'}
+                    onClick={() => setDetailTab('participantes')}
+                  >
+                    Participantes ({viewParts.length})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={detailTab === 'financeiro' ? 'default' : 'ghost'}
+                    onClick={() => setDetailTab('financeiro')}
+                  >
+                    Financeiro
+                  </Button>
+                </div>
+              </div>
+
+              {detailTab === 'resumo' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Informações gerais</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <ModalRow label="Status">
+                        <Badge variant="outline">{viewContrato.status || '-'}</Badge>
+                      </ModalRow>
+                      <ModalRow label="Data">{formatDate(viewContrato.data_evento)}</ModalRow>
+                      <ModalRow label="Local">{viewContrato.local_nome || '-'}</ModalRow>
+                      <ModalRow label="Modalidade">{viewContrato.modalidade || '-'}</ModalRow>
+                      <ModalRow label="KM">{viewContrato.km || '-'}</ModalRow>
+                      <ModalRow label="Consultor">{viewContrato.consultor || '-'}</ModalRow>
+                      <ModalRow label="Cliente">{viewContrato.empresa_nome || '-'}</ModalRow>
+                      <ModalRow label="Descrição">{viewContrato.descricao || '-'}</ModalRow>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Resumo operacional</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      <ModalRow label="Participantes inscritos">{viewParts.length}</ModalRow>
+                      <ModalRow label="Vagas contratadas">{Number(viewContrato.qtd_contratada || 0)}</ModalRow>
+                      <ModalRow label="Valor total">{BRL.format(Number(viewContrato.valor_total || 0))}</ModalRow>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {detailTab === 'participantes' && (
+                <Card className="gap-0 overflow-hidden py-4 ring-1 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base">Participantes ({viewParts.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    {viewParts.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-8">Nenhum participante inscrito ainda.</p>
+                    ) : (
+                      <div className="md:overflow-x-auto">
+                        <RTable>
+                          <RTableHeader>
+                            <RTableRow>
+                              <RTableHead>Nome</RTableHead>
+                              <RTableHead>WhatsApp</RTableHead>
+                              <RTableHead>CPF</RTableHead>
+                              <RTableHead>Modalidade</RTableHead>
+                              <RTableHead>Camiseta</RTableHead>
+                              <RTableHead>Pagamento</RTableHead>
+                              <RTableHead>Inscrito em</RTableHead>
+                            </RTableRow>
+                          </RTableHeader>
+                          <RTableBody>
+                            {viewParts.map(parte => (
+                              <RTableRow key={parte.id}>
+                                <RTableCell className="font-medium">{parte.nome || '-'}</RTableCell>
+                                <RTableCell>{parte.whatsapp || '-'}</RTableCell>
+                                <RTableCell className="font-mono text-xs">{parte.cpf || '-'}</RTableCell>
+                                <RTableCell>{parte.modalidade || '-'}</RTableCell>
+                                <RTableCell>{parte.tamanho_camiseta || '-'}</RTableCell>
+                                <RTableCell>
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      (parte.status_pagamento || '').toLowerCase() === 'pago'
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : 'bg-amber-100 text-amber-700'
+                                    }
+                                  >
+                                    {parte.status_pagamento || '-'}
+                                  </Badge>
+                                </RTableCell>
+                                <RTableCell className="text-xs text-muted-foreground">{formatDate(parte.data_inscricao)}</RTableCell>
+                              </RTableRow>
+                            ))}
+                          </RTableBody>
+                        </RTable>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {detailTab === 'financeiro' && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Financeiro e vagas</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    <ModalRow label="Valor total">{BRL.format(Number(viewContrato.valor_total || 0))}</ModalRow>
+                    <ModalRow label="Valor pago">{BRL.format(Number(viewContrato.valor_pago || 0))}</ModalRow>
+                    <ModalRow label="Participantes inscritos">{viewParts.length}</ModalRow>
+                    <ModalRow label="Vagas contratadas">{Number(viewContrato.qtd_contratada || 0)}</ModalRow>
+                    <ModalRow label="Taxa de ocupação">
+                      {(() => {
+                        const vagas = Number(viewContrato.qtd_contratada || 0)
+                        const pct = vagas > 0 ? Math.round((viewParts.length / vagas) * 100) : 0
+                        return `${viewParts.length}/${vagas} (${pct}%)`
+                      })()}
+                    </ModalRow>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function ModalRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium">{children}</span>
     </div>
   )
 }

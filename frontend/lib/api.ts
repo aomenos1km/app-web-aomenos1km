@@ -28,7 +28,7 @@ async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise
     headers,
   })
 
-  if (res.status === 401) {
+  if (res.status === 401 && endpoint !== '/api/auth/login') {
     // Token expirado — limpa sessão e redireciona para login
     if (typeof window !== 'undefined') {
       sessionStorage.clear()
@@ -163,6 +163,17 @@ export interface MetaMensal {
   status: 'vermelho' | 'amarelo' | 'verde'
 }
 
+export interface MetaMensalDetalhada {
+  mes: number
+  ano: number
+  meta_vendas: number
+  meta_km?: number
+  meta_contratos: number
+  descricao: string
+  ativo?: boolean
+  atualizado_em?: string
+}
+
 export interface Tendencia {
   mes: number
   ano: number
@@ -196,6 +207,22 @@ export interface PerformanceConsultor {
   orcamentos_criados: number
   vendas_fechadas: number
   taxa_conversao: number
+}
+
+export interface FinanceiroResumoSerie {
+  key: string
+  label: string
+  contratado: number
+  recebido: number
+}
+
+export interface FinanceiroResumo {
+  contratado: number
+  recebido: number
+  saldo: number
+  percentual_recebido: number
+  total_contratos: number
+  series: FinanceiroResumoSerie[]
 }
 
 export const dashboard = {
@@ -235,6 +262,26 @@ export const dashboard = {
     const qs = new URLSearchParams(payload).toString()
     return apiFetch<{ success: boolean; data: PerformanceConsultor[] }>(`/api/dashboard/performance-orcamentos-vendas${qs ? '?' + qs : ''}`)
   },
+  resumoFinanceiroContratos: (params?: { periodo?: 'mes' | '3m' | 'ano' | '12m'; tipo?: 'comerciais' | 'retroativos' | 'todos' }) => {
+    const payload: Record<string, string> = {}
+    if (params?.periodo) payload.periodo = params.periodo
+    if (params?.tipo) payload.tipo = params.tipo
+    const qs = new URLSearchParams(payload).toString()
+    return apiFetch<{ success: boolean; data: FinanceiroResumo }>(`/api/financeiro/contratos/resumo${qs ? '?' + qs : ''}`)
+  },
+  listarMetas: (ano?: string) => {
+    const qs = ano ? `?ano=${ano}` : ''
+    return apiFetch<{ success: boolean; data: MetaMensalDetalhada[] }>(`/api/dashboard/metas${qs}`)
+  },
+  salvarMeta: (
+    mes: number | string,
+    ano: number | string,
+    dados: { meta_vendas: number; meta_contratos: number; descricao: string },
+  ) =>
+    apiFetch<{ success: boolean; data: MetaMensalDetalhada }>(`/api/admin/metas/${mes}/${ano}`, {
+      method: 'PUT',
+      body: JSON.stringify(dados),
+    }),
 }
 
 export interface ContratoResumo {
@@ -256,6 +303,7 @@ export interface Contrato {
   descricao: string
   valor_total: number
   data_evento?: string
+  hora_chegada?: string
   local_nome: string
   modalidade: string
   qtd_contratada: number
@@ -273,16 +321,35 @@ export interface Contrato {
   observacoes: string
   pix_copia_cola: string
   qtd_inscritos: number
+  responsavel_empresa?: string
   criado_em: string
 }
 
 export interface ContratoRetroativoInput {
   empresa_nome: string
+  tipo_pessoa?: 'pj' | 'pf'
+  documento?: string
+  nome_fantasia?: string
+  responsavel?: string
+  email?: string
+  cidade_cliente?: string
+  uf_cliente?: string
   nome_evento: string
   data_evento: string
+  hora_chegada?: string
   local_id?: string
   local_nome?: string
   local_nao_cadastrado?: boolean
+  local_cep?: string
+  local_logradouro?: string
+  local_numero?: string
+  local_complemento?: string
+  local_bairro?: string
+  local_cidade?: string
+  local_uf?: string
+  local_capacidade_maxima?: number
+  local_responsavel?: string
+  local_whatsapp?: string
   modalidade?: string
   qtd_contratada?: number
   valor_total?: number
@@ -307,6 +374,7 @@ export interface ContratoPublico {
   nome_evento: string
   valor_total: number
   data_evento?: string
+  hora_chegada?: string
   local_nome: string
   modalidade: string
   link_gateway: string
@@ -345,7 +413,67 @@ export const contratos = {
     apiFetch(`/api/contratos/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   atualizarStatus: (id: string, status: ContratoPipelineStatus) =>
     apiFetch(`/api/contratos/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  listarParcelas: (id: string) =>
+    apiFetch<{ success: boolean; data: ParcelaContrato[] }>(`/api/contratos/${id}/parcelas`),
+  salvarParcelas: (id: string, parcelas: ParcelaContratoInput[]) =>
+    apiFetch(`/api/contratos/${id}/parcelas`, {
+      method: 'PUT',
+      body: JSON.stringify({ parcelas }),
+    }),
+  excluirParcelas: (id: string) =>
+    apiFetch(`/api/contratos/${id}/parcelas`, { method: 'DELETE' }),
   deletar: (id: string) => apiFetch(`/api/contratos/${id}`, { method: 'DELETE' }),
+}
+
+export interface ParcelaContrato {
+  id: string
+  contrato_id: string
+  contrato_nome_evento: string
+  contrato_empresa_nome: string
+  contrato_consultor: string
+  baixado_por_nome: string
+  numero_parcela: number
+  valor_previsto: number
+  valor_recebido: number
+  vencimento: string
+  data_pagamento: string
+  forma_pagamento_esperada: string
+  forma_pagamento_realizada: string
+  status: string
+  observacoes: string
+  criado_em: string
+  atualizado_em: string
+}
+
+export interface ParcelaContratoInput {
+  numero_parcela: number
+  valor_previsto: number
+  vencimento: string
+  forma_pagamento_esperada?: string
+  observacoes?: string
+}
+
+export interface BaixaParcelaInput {
+  valor_recebido?: number
+  data_pagamento?: string
+  forma_pagamento_realizada?: string
+  observacoes?: string
+}
+
+export const financeiroContratos = {
+  listarParcelas: (params?: { contrato_id?: string; status?: string; consultor?: string }) => {
+    const payload: Record<string, string> = {}
+    if (params?.contrato_id) payload.contrato_id = params.contrato_id
+    if (params?.status) payload.status = params.status
+    if (params?.consultor) payload.consultor = params.consultor
+    const qs = new URLSearchParams(payload).toString()
+    return apiFetch<{ success: boolean; data: ParcelaContrato[] }>(`/api/financeiro/parcelas${qs ? '?' + qs : ''}`)
+  },
+  baixarParcela: (id: string, data: BaixaParcelaInput) =>
+    apiFetch(`/api/financeiro/parcelas/${id}/baixa`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 }
 
 export interface ComissaoExtratoItem {
@@ -448,6 +576,16 @@ export interface CheckinInput {
   cidade?: string
   uf?: string
   comprovante_url?: string
+  genero_identidade?: string
+  inscricao_relacionamento?: string
+  inscricao_titular_id?: string
+  dependentes?: Array<{
+    nome: string
+    cpf: string
+    nascimento?: string
+    relacionamento: string
+    tamanho_camiseta?: string
+  }>
 }
 
 export interface CheckinResponse {
@@ -459,6 +597,19 @@ export interface CheckinResponse {
   }
 }
 
+export interface ValidacaoDuplicacaoResponse {
+  success: boolean
+  error?: string
+  data?: {
+    existe: boolean
+    pode_inscrever: boolean
+    status?: string
+    status_finalizado?: boolean
+    mensagem_bloqueio?: string
+    mensagem_aviso?: string
+  }
+}
+
 export const participantes = {
   listarPorContrato: (contratoId: string) =>
     apiFetch<{ success: boolean; data: Participante[] }>(`/api/contratos/${contratoId}/participantes`),
@@ -466,6 +617,8 @@ export const participantes = {
     const qs = q ? `?q=${encodeURIComponent(q)}` : ''
     return apiFetch<{ success: boolean; data: unknown[] }>(`/api/participantes/historico${qs}`)
   },
+  validarDuplicacao: (cpf: string, eventoId: string) =>
+    apiFetch<ValidacaoDuplicacaoResponse>(`/api/participantes/validar-duplicacao?cpf=${encodeURIComponent(cpf)}&evento_id=${encodeURIComponent(eventoId)}`),
   checkin: (data: CheckinInput) =>
     apiFetch<CheckinResponse>('/api/participantes/checkin', { method: 'POST', body: JSON.stringify(data) }),
   verificarStatusPagamento: (id: string) =>
@@ -693,6 +846,7 @@ export interface Proposta {
   telefone: string
   evento_nome: string
   data_evento?: string
+  hora_chegada?: string
   local_id?: string
   local_nome: string
   cidade_evento: string
@@ -738,6 +892,7 @@ export interface PropostaInput {
   telefone?: string
   evento_nome: string
   data_evento?: string
+  hora_chegada?: string
   local_id?: string
   local_nome?: string
   cidade_evento?: string
@@ -889,6 +1044,13 @@ export interface ConfiguracaoSistema {
   preco_backup_trofeu: number
   setup_minimo: number
   limite_setup_pessoas: number
+  formas_pagamento_disponiveis: string[]
+  max_parcelas_sem_juros: number
+  permite_parcelamento_pix_transferencia_boleto: boolean
+  entrada_min_percent: number
+  multa_atraso_percent: number
+  juros_mes_percent: number
+  texto_condicoes_pagamento: string
 }
 
 export interface ConfiguracaoPublicaPreco extends ConfiguracaoSistema {

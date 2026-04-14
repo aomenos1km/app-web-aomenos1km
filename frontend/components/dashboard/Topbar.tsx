@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Bell, ChevronDown, ChevronUp, CircleHelp, Download, ExternalLink, FileArchive, FileSpreadsheet, FileText, Image as ImageIcon, ListOrdered, LogOut, Menu, User, X } from 'lucide-react'
@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { findHelpSectionByPath } from '@/lib/help-center'
 import { abrirPreviewProposta, PropostaPdfData } from '@/lib/proposta-pdf'
+import { buildCondicoesFromComercial, parseComercialTag, parseCondicoesTag } from '@/lib/proposta-comercial'
 import { cn } from '@/lib/utils'
 import {
   DropdownMenu,
@@ -22,7 +23,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useAuth } from '@/hooks/useAuth'
-import { empresas, notificacoes, Notificacao, orcamentos, PropostaDetalhe } from '@/lib/api'
+import { configuracoes, empresas, notificacoes, Notificacao, orcamentos, PropostaDetalhe } from '@/lib/api'
 
 interface TopbarProps {
   onMenuClick: () => void
@@ -68,13 +69,19 @@ const HELP_ENTRIES_STORAGE_KEY = 'aomenos1km-help-entries-v1'
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 
 export default function Topbar({ onMenuClick }: TopbarProps) {
+  type NotifFiltro = 'todas' | 'propostas' | 'orcamentos' | 'operacional' | 'sistema'
+  type NotifGrupoData = 'hoje' | 'ontem' | 'semana' | 'antigas'
+
   const { user, logout } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
   const [helpOpen, setHelpOpen] = useState(false)
   const [expandedHelpEntryId, setExpandedHelpEntryId] = useState<string | null>(null)
   const [notifs, setNotifs] = useState<Notificacao[]>([])
+  const [condPagtoPadrao, setCondPagtoPadrao] = useState('50% no aceite e 50% na entrega dos kits')
   const [notifOpen, setNotifOpen] = useState(false)
+  const [notifFiltro, setNotifFiltro] = useState<NotifFiltro>('todas')
+  const [notifExpandida, setNotifExpandida] = useState(false)
   const [helpEntries, setHelpEntries] = useState<HelpEntry[]>([])
   const notifOpenRef = useRef(false)
   const notificacoesInicializadasRef = useRef(false)
@@ -107,10 +114,30 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
   }, [notifOpen])
 
   useEffect(() => {
+    if (notifOpen) return
+    setNotifFiltro('todas')
+    setNotifExpandida(false)
+  }, [notifOpen])
+
+  useEffect(() => {
     carregarNotificacoes()
     const timer = window.setInterval(() => carregarNotificacoes(), 60000)
     return () => window.clearInterval(timer)
   }, [carregarNotificacoes])
+
+  useEffect(() => {
+    let ativo = true
+    configuracoes.buscar()
+      .then(r => {
+        if (!ativo) return
+        const texto = r.data?.texto_condicoes_pagamento?.trim()
+        if (texto) setCondPagtoPadrao(texto)
+      })
+      .catch(() => {})
+    return () => {
+      ativo = false
+    }
+  }, [])
 
   useEffect(() => {
     notificacoesIdsRef.current = new Set(notifs.map(n => n.id))
@@ -270,7 +297,23 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
     return dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
   }
 
+  function isPropostaRetroativa(observacoes?: string) {
+    return String(observacoes || '').toLowerCase().includes('[origem:retroativo]')
+  }
+
+  function parseRetroValorPago(observacoes?: string) {
+    const texto = String(observacoes || '')
+    const match = texto.match(/\[retroativo:valor_pago=([0-9]+(?:\.[0-9]+)?)\]/i)
+    if (!match) return 0
+    const parsed = Number(match[1])
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
   function toPdfData(p: PropostaDetalhe, documentoEmpresa?: string, enderecoEmpresa?: string, consultorNome?: string): PropostaPdfData {
+    const isRetro = isPropostaRetroativa(p.observacoes)
+    const comercial = parseComercialTag(p.observacoes)
+    const condicoesPersistidas = parseCondicoesTag(p.observacoes)
+    const condicoes = comercial ? buildCondicoesFromComercial(comercial) : null
     return {
       nomeEmpresa: p.empresa_nome || 'Cliente não informado',
       documentoEmpresa: documentoEmpresa || '-',
@@ -279,11 +322,23 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
       enderecoEmpresa: enderecoEmpresa || 'Não informado',
       eventoNome: p.evento_nome || 'Evento não informado',
       dataEvento: p.data_evento,
+      condPagto: condicoesPersistidas?.condPagto || condicoes?.condPagto || condPagtoPadrao,
+      condValidade: condicoesPersistidas?.condValidade || condicoes?.condValidade || '10 dias corridos',
+      condEntrega: condicoesPersistidas?.condEntrega || condicoes?.condEntrega || 'Até 2 dias antes do evento',
+      pagamentoEntradaPercent: comercial?.entradaPercent,
+      pagamentoQtdParcelas: comercial?.qtdParcelas,
+      pagamentoIntervaloDias: comercial?.intervaloDias,
+      pagamentoPrimeiroVencimentoDias: comercial?.primeiroVencimentoDias,
+      validadeDias: comercial?.validadeDias,
+      entregaDiasAntes: comercial?.entregaDiasAntes,
       qtdPessoas: Number(p.qtd_pessoas || 0),
       kmEvento: Number(p.km_evento || 0),
       localNome: p.local_nome || 'A Definir',
       cidadeEvento: p.cidade_evento || '-',
       totalGeral: Number(p.valor_total || 0),
+      isRetroativo: isRetro,
+      retroValorTotal: isRetro ? Number(p.valor_total || 0) : undefined,
+      retroValorPago: isRetro ? parseRetroValorPago(p.observacoes) : undefined,
       itens: (p.itens ?? []).map(i => ({
         nome: i.nome,
         descricao: i.descricao || '-',
@@ -350,6 +405,87 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
       toast.error('Não foi possível limpar as notificações')
     }
   }
+
+  function categorizarNotificacao(n: Notificacao): Exclude<NotifFiltro, 'todas'> {
+    const texto = `${n.tipo || ''} ${n.titulo || ''} ${n.mensagem || ''}`.toLowerCase()
+    if (/(proposta|pdf da proposta)/.test(texto)) return 'propostas'
+    if (/(orcamento|orçamento|pedido do site)/.test(texto)) return 'orcamentos'
+    if (/(check-?in|lista aberta|participante|vagas|evento)/.test(texto)) return 'operacional'
+    return 'sistema'
+  }
+
+  const resumoNotificacoes = useMemo(() => {
+    const base = {
+      propostas: 0,
+      orcamentos: 0,
+      operacional: 0,
+      sistema: 0,
+    }
+
+    notifs.forEach(n => {
+      base[categorizarNotificacao(n)] += 1
+    })
+
+    return base
+  }, [notifs])
+
+  const notifsFiltradas = useMemo(() => {
+    if (notifFiltro === 'todas') return notifs
+    return notifs.filter(n => categorizarNotificacao(n) === notifFiltro)
+  }, [notifs, notifFiltro])
+
+  const LIMITE_NOTIFS_COLAPSADA = 5
+  const notifsVisiveis = notifExpandida
+    ? notifsFiltradas
+    : notifsFiltradas.slice(0, LIMITE_NOTIFS_COLAPSADA)
+  const temMaisNotificacoesFiltradas = notifsFiltradas.length > LIMITE_NOTIFS_COLAPSADA
+  const quantidadeOculta = Math.max(0, notifsFiltradas.length - LIMITE_NOTIFS_COLAPSADA)
+
+  function agruparNotificacaoPorData(value?: string): NotifGrupoData {
+    if (!value) return 'antigas'
+    const dt = new Date(value)
+    if (Number.isNaN(dt.getTime())) return 'antigas'
+
+    const hoje = new Date()
+    const inicioHoje = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())
+    const inicioOntem = new Date(inicioHoje)
+    inicioOntem.setDate(inicioOntem.getDate() - 1)
+    const inicioSemana = new Date(inicioHoje)
+    inicioSemana.setDate(inicioSemana.getDate() - 7)
+
+    if (dt >= inicioHoje) return 'hoje'
+    if (dt >= inicioOntem) return 'ontem'
+    if (dt >= inicioSemana) return 'semana'
+    return 'antigas'
+  }
+
+  const gruposDataVisiveis = useMemo(() => {
+    const buckets: Record<NotifGrupoData, Notificacao[]> = {
+      hoje: [],
+      ontem: [],
+      semana: [],
+      antigas: [],
+    }
+
+    notifsVisiveis.forEach(n => {
+      buckets[agruparNotificacaoPorData(n.criado_em)].push(n)
+    })
+
+    const labels: Record<NotifGrupoData, string> = {
+      hoje: 'Hoje',
+      ontem: 'Ontem',
+      semana: 'Esta semana',
+      antigas: 'Antigas',
+    }
+
+    return (['hoje', 'ontem', 'semana', 'antigas'] as NotifGrupoData[])
+      .filter(grupo => buckets[grupo].length > 0)
+      .map(grupo => ({
+        grupo,
+        label: labels[grupo],
+        itens: buckets[grupo],
+      }))
+  }, [notifsVisiveis])
 
   function htmlToPlainText(html: string) {
     if (!html) return ''
@@ -489,25 +625,62 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
             </Badge>
           )}
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-[360px] rounded-2xl border-0 bg-[#f45a06] p-0 text-white shadow-2xl">
+        <DropdownMenuContent align="end" className="w-[380px] rounded-2xl border-0 bg-[#f45a06] p-0 text-white shadow-2xl">
           <DropdownMenuGroup>
-            <DropdownMenuLabel className="flex items-center justify-between gap-2 px-4 py-3 text-white">
-              <span>Notificações</span>
-              <Badge className="h-6 min-w-6 rounded-full bg-white px-2 text-xs font-bold text-[#171417] hover:bg-white">
-                {notifs.length} novas
-              </Badge>
+            <DropdownMenuLabel className="px-4 py-3 text-white">
+              <div className="flex items-center justify-between gap-2">
+                <span>Notificações</span>
+                <Badge className="h-6 min-w-6 rounded-full bg-white px-2 text-xs font-bold text-[#171417] hover:bg-white">
+                  {notifs.length} novas
+                </Badge>
+                {notifs.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-white/90 hover:text-white"
+                    onClick={e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      void limparTodasNotificacoes()
+                    }}
+                  >
+                    Limpar todas
+                  </button>
+                )}
+              </div>
               {notifs.length > 0 && (
-                <button
-                  type="button"
-                  className="text-xs text-white/90 hover:text-white"
-                  onClick={e => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void limparTodasNotificacoes()
-                  }}
-                >
-                  Limpar todas
-                </button>
+                <p className="mt-2 text-[11px] text-white/85">
+                  {resumoNotificacoes.propostas} propostas, {resumoNotificacoes.orcamentos} orçamentos, {resumoNotificacoes.operacional} operacional e {resumoNotificacoes.sistema} sistema.
+                </p>
+              )}
+              {notifs.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {([
+                    ['todas', `Todas (${notifs.length})`],
+                    ['propostas', `Propostas (${resumoNotificacoes.propostas})`],
+                    ['orcamentos', `Orçamentos (${resumoNotificacoes.orcamentos})`],
+                    ['operacional', `Operacional (${resumoNotificacoes.operacional})`],
+                    ['sistema', `Sistema (${resumoNotificacoes.sistema})`],
+                  ] as Array<[NotifFiltro, string]>).map(([filtro, label]) => (
+                    <button
+                      key={filtro}
+                      type="button"
+                      onClick={e => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setNotifFiltro(filtro)
+                        setNotifExpandida(false)
+                      }}
+                      className={cn(
+                        'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                        notifFiltro === filtro
+                          ? 'border-white bg-white text-[#f45a06]'
+                          : 'border-white/40 bg-white/10 text-white hover:bg-white/20',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               )}
             </DropdownMenuLabel>
           </DropdownMenuGroup>
@@ -517,51 +690,99 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
               Nenhuma notificação nova
             </p>
           ) : (
-            notifs.slice(0, 8).map(n => (
-              <DropdownMenuItem
-                key={n.id}
-                className="m-2 flex cursor-pointer items-start gap-2 rounded-xl border border-black/10 bg-white p-3 text-[#171417] hover:bg-white/95"
-                onClick={() => void abrirNotificacao(n)}
-              >
-                <div className="min-w-0 flex-1">
-                  <span className="text-sm font-extrabold leading-tight line-clamp-1">{n.titulo}</span>
-                  <span className="mt-1 block text-sm font-semibold leading-tight line-clamp-2">{n.mensagem}</span>
-                  <span className="mt-1 block text-xs text-[#5f646d] line-clamp-1">
-                    Por: {n.autor_nome || 'Sistema'} {n.autor_perfil ? `${n.autor_perfil} ` : ''}às {formatarHorarioNotificacao(n.criado_em)}
-                  </span>
-                </div>
+            <div className="max-h-[62vh] overflow-y-auto px-1 pb-2">
+              {notifsFiltradas.length === 0 && (
+                <p className="px-3 py-4 text-center text-xs text-white/90">
+                  Nenhuma notificação nessa categoria.
+                </p>
+              )}
 
-                {(n.proposta_id || n.contrato_id) && (
+              {gruposDataVisiveis.map(grupo => (
+                <div key={grupo.grupo} className="px-1 pt-1">
+                  <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-white/80">
+                    {grupo.label} ({grupo.itens.length})
+                  </p>
+
+                  {grupo.itens.map(n => (
+                    <DropdownMenuItem
+                      key={n.id}
+                      className="m-2 flex cursor-pointer items-start gap-2 rounded-xl border border-black/10 bg-white p-3 text-[#171417] hover:bg-white/95"
+                      onClick={() => void abrirNotificacao(n)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm font-extrabold leading-tight line-clamp-1">{n.titulo}</span>
+                        <span className="mt-1 block text-sm font-semibold leading-tight line-clamp-2">{n.mensagem}</span>
+                        <span className="mt-1 block text-xs text-[#5f646d] line-clamp-1">
+                          Por: {n.autor_nome || 'Sistema'} {n.autor_perfil ? `${n.autor_perfil} ` : ''}às {formatarHorarioNotificacao(n.criado_em)}
+                        </span>
+                      </div>
+
+                      {(n.proposta_id || n.contrato_id) && (
+                        <button
+                          type="button"
+                          className="shrink-0 text-[#dc3545] hover:text-[#b4202f]"
+                          title="Abrir PDF"
+                          aria-label="Abrir PDF"
+                          onClick={e => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            void abrirPdfNotificacao(n)
+                          }}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="shrink-0 text-[#5f646d] hover:text-[#171417]"
+                        title="Marcar como lida"
+                        aria-label="Marcar como lida"
+                        onClick={e => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          void marcarLida(n.id)
+                        }}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              ))}
+
+              {temMaisNotificacoesFiltradas && !notifExpandida && (
+                <div className="px-2 pb-2">
                   <button
                     type="button"
-                    className="shrink-0 text-[#dc3545] hover:text-[#b4202f]"
-                    title="Abrir PDF"
-                    aria-label="Abrir PDF"
+                    className="w-full rounded-lg border border-white/40 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
                     onClick={e => {
                       e.preventDefault()
                       e.stopPropagation()
-                      void abrirPdfNotificacao(n)
+                      setNotifExpandida(true)
                     }}
                   >
-                    <FileText className="h-4 w-4" />
+                    Mostrar mais {quantidadeOculta} notificações
                   </button>
-                )}
+                </div>
+              )}
 
-                <button
-                  type="button"
-                  className="shrink-0 text-[#5f646d] hover:text-[#171417]"
-                  title="Marcar como lida"
-                  aria-label="Marcar como lida"
-                  onClick={e => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void marcarLida(n.id)
-                  }}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </DropdownMenuItem>
-            ))
+              {temMaisNotificacoesFiltradas && notifExpandida && (
+                <div className="px-2 pb-2">
+                  <button
+                    type="button"
+                    className="w-full rounded-lg border border-white/40 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
+                    onClick={e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setNotifExpandida(false)
+                    }}
+                  >
+                    Mostrar menos
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -614,12 +835,12 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
                   const meta = getAttachmentMeta(entry.anexo)
                   const embedUrl = getEmbedVideoUrl(entry.videoLink)
                   return (
-                    <div key={entry.id} className="overflow-hidden rounded-lg border border-black/10 bg-card dark:bg-slate-800">
+                    <div key={entry.id} className="overflow-hidden rounded-lg border border-black/10 bg-card transition-all duration-200 hover:border-[#f25c05]/40 dark:bg-slate-800 dark:border-slate-700 dark:hover:border-orange-500/25">
                       <button
                         type="button"
                         className={cn(
-                          'flex w-full items-center justify-between px-4 py-3 text-left transition-colors',
-                          open ? 'bg-[#c6d8f0] dark:bg-blue-900/40 text-foreground dark:text-white' : 'hover:bg-muted/60 dark:hover:bg-slate-700/50'
+                          'flex w-full items-center justify-between px-4 py-3 text-left transition-all duration-200',
+                          open ? 'bg-orange-50/70 dark:bg-orange-950/50 text-foreground dark:text-white' : 'hover:bg-orange-50/70 dark:hover:bg-orange-950/20'
                         )}
                         onClick={() => setExpandedHelpEntryId(prev => (prev === entry.id ? null : entry.id))}
                       >
@@ -640,7 +861,7 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
 
                           {entry.instrucoesHtml && (
                             <div
-                              className="prose prose-sm max-w-none text-sm text-foreground dark:text-white dark:prose-invert [&_a]:text-[#0d6efd] dark:[&_a]:text-blue-400 [&_a]:underline [&_a]:underline-offset-2"
+                              className="prose prose-sm max-w-none text-sm text-foreground dark:text-white dark:prose-invert [&_a]:text-[#0d6efd] dark:[&_a]:text-blue-400 [&_a]:underline [&_a]:underline-offset-2 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1"
                               dangerouslySetInnerHTML={{ __html: ensureLinksOpenInNewTab(entry.instrucoesHtml) }}
                             />
                           )}
@@ -730,7 +951,7 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
             ) : currentHelpSection?.topics && currentHelpSection.topics.length > 0 ? (
               <div className="space-y-3">
                 {currentHelpSection.topics.map(topic => (
-                  <div key={topic.id} className="rounded-lg border border-black/10 bg-card dark:bg-slate-800 p-4 dark:hover:bg-slate-700/50 transition-colors">
+                  <div key={topic.id} className="rounded-lg border border-black/10 bg-card p-4 transition-all duration-200 hover:border-[#f25c05]/50 hover:bg-orange-50/60 hover:shadow-[0_4px_14px_-8px_rgba(242,92,5,0.5)] dark:bg-slate-800 dark:border-slate-700 dark:hover:border-orange-500/30 dark:hover:bg-orange-950/20">
                     <p className="font-semibold text-foreground dark:text-white">{topic.title}</p>
                     <p className="text-sm text-muted-foreground dark:text-gray-300 mt-1 whitespace-pre-line">{topic.body}</p>
                   </div>

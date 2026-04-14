@@ -146,6 +146,7 @@ type Proposta struct {
 	Telefone         string         `json:"telefone" db:"telefone"`
 	EventoNome       string         `json:"evento_nome" db:"evento_nome"`
 	DataEvento       *string        `json:"data_evento,omitempty" db:"data_evento"`
+	HoraChegada      string         `json:"hora_chegada" db:"hora_chegada"`
 	LocalID          *string        `json:"local_id,omitempty" db:"local_id"`
 	LocalNome        string         `json:"local_nome" db:"local_nome"`
 	CidadeEvento     string         `json:"cidade_evento" db:"cidade_evento"`
@@ -195,6 +196,7 @@ type PropostaInput struct {
 	Telefone         string              `json:"telefone"`
 	EventoNome       string              `json:"evento_nome" binding:"required"`
 	DataEvento       *string             `json:"data_evento"`
+	HoraChegada      string              `json:"hora_chegada"`
 	LocalID          *string             `json:"local_id"`
 	LocalNome        string              `json:"local_nome"`
 	CidadeEvento     string              `json:"cidade_evento"`

@@ -3,6 +3,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
+  configuracoes,
   empresas,
   Empresa,
   insumos,
@@ -73,6 +74,17 @@ import {
   Zap,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import {
+  buildComercialTag,
+  buildCondicoesTag,
+  buildCondicoesFromComercial,
+  COMERCIAL_DEFAULTS,
+  parseCondicoesTag,
+  parseComercialTag,
+  stripComercialTag,
+  stripCondicoesTag,
+  type ComercialEstruturado,
+} from '@/lib/proposta-comercial'
 
 const TERMOS_PADRAO = `1. ALTERAÇÃO DE QUANTIDADE:
 O número de participantes/kits pode ser ajustado em até 10% sem custo extra até 15 dias antes do evento. Após essa data, será cobrado o valor integral contratado.
@@ -110,8 +122,9 @@ const EMPTY_ITEM: OrcamentoItem = {
 
 const PARTICULAS_NOME = new Set(['da', 'das', 'de', 'di', 'do', 'dos', 'du', 'e'])
 
-function isInfraestruturaItem(item: OrcamentoItem) {
-  return !item.insumoId && item.nome === 'Infraestrutura e Log\u00edstica'
+function isAutoLocalItem(item: OrcamentoItem) {
+  if (item.insumoId) return false
+  return item.nome === 'Infraestrutura e Log\u00edstica' || item.nome === 'Registro Retroativo Consolidado'
 }
 
 // ������ Helpers ������������������������������������������������������������������������������������������������������������������������������������
@@ -139,15 +152,34 @@ function statusBadgeClass(status?: string) {
   }
 }
 
+function isPropostaRetroativa(observacoes?: string) {
+  return String(observacoes || '').toLowerCase().includes('[origem:retroativo]')
+}
+
+function parseRetroValorPago(observacoes?: string) {
+  const texto = String(observacoes || '')
+  const match = texto.match(/\[retroativo:valor_pago=([0-9]+(?:\.[0-9]+)?)\]/i)
+  if (!match) return 0
+  const parsed = Number(match[1])
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 function formatCurrencyInput(value: number) {
   return value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-function computeTaxaLocal(localSelecionado: Local | undefined, qtdPessoas: number) {
+function computeTaxaLocal(
+  localSelecionado: Local | undefined,
+  qtdPessoas: number,
+  setupMinimo: number,
+  limiteSetupPessoas: number,
+) {
   if (!localSelecionado) return 0
+  if (qtdPessoas <= limiteSetupPessoas) {
+    return Math.max(Number(setupMinimo || 0), 0)
+  }
   if (localSelecionado.tipo_taxa === 'Pessoa') {
-    const minimo = Number(localSelecionado.minimo_pessoas ?? 0)
-    return qtdPessoas > minimo ? Number(localSelecionado.taxa_valor ?? 0) * qtdPessoas : 0
+    return Number(localSelecionado.taxa_valor ?? 0) * Math.max(qtdPessoas, 0)
   }
   return Number(localSelecionado.taxa_valor ?? 0)
 }
@@ -286,6 +318,7 @@ export default function OrcamentosPage() {
   const [localId, setLocalId] = useState('')
   const [eventoNome, setEventoNome] = useState('')
   const [dataEvento, setDataEvento] = useState('')
+  const [horaChegada, setHoraChegada] = useState('')
   const [qtdPessoas, setQtdPessoas] = useState(0)
   const [kmEvento, setKmEvento] = useState(0)
   const [responsavel, setResponsavel] = useState('')
@@ -299,6 +332,10 @@ export default function OrcamentosPage() {
   const [sincronizarQtd, setSincronizarQtd] = useState(false)
   const [items, setItems] = useState<OrcamentoItem[]>([{ ...EMPTY_ITEM, id: crypto.randomUUID() }])
   const [savingProposta, setSavingProposta] = useState(false)
+  const [cadastroRetroativo, setCadastroRetroativo] = useState(false)
+  const [retroDetalharEscopo, setRetroDetalharEscopo] = useState(false)
+  const [retroValorTotal, setRetroValorTotal] = useState('')
+  const [retroValorPago, setRetroValorPago] = useState('')
 
   // Accordion "Novo Cliente"
   const [showNovoCliente, setShowNovoCliente] = useState(false)
@@ -341,13 +378,20 @@ export default function OrcamentosPage() {
   const [imagemCircuito, setImagemCircuito] = useState<string>('')
 
   // Termos e condições
+  const [condPagtoPadrao, setCondPagtoPadrao] = useState('50% no aceite e 50% na entrega dos kits')
   const [condPagto, setCondPagto] = useState('50% no aceite e 50% na entrega dos kits')
   const [condValidade, setCondValidade] = useState('10 dias corridos')
   const [condEntrega, setCondEntrega] = useState('Até 2 dias antes do evento')
+  const [setupMinimo, setSetupMinimo] = useState(1200)
+  const [limiteSetupPessoas, setLimiteSetupPessoas] = useState(150)
   const [termos, setTermos] = useState(TERMOS_PADRAO)
+  const [comercialEstruturado, setComercialEstruturado] = useState<ComercialEstruturado>(COMERCIAL_DEFAULTS)
 
   const clienteInputRef = useRef<HTMLInputElement>(null)
   const qtdPessoasRef = useRef<HTMLInputElement>(null)
+  const localSearchInputRef = useRef<HTMLInputElement>(null)
+  const localOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const [localFocusIndex, setLocalFocusIndex] = useState(0)
 
   // ������ Carregamento inicial ������������������������������������������������������������������������������������������������
   useEffect(() => {
@@ -359,14 +403,26 @@ export default function OrcamentosPage() {
       orcamentos.listarPendentes(),
       orcamentos.listarPropostas(),
       perfisOrcamento.listar(),
+      configuracoes.buscar().catch(() => null),
     ])
-      .then(([rEmpresas, rLocais, rInsumos, rPedidos, rPropostas, rPerfis]) => {
+      .then(([rEmpresas, rLocais, rInsumos, rPedidos, rPropostas, rPerfis, rConfiguracoes]) => {
         setEmpresasList(rEmpresas.data ?? [])
         setLocaisList((rLocais.data ?? []).filter(l => l.ativo))
         setInsumosList((rInsumos.data ?? []).filter(i => i.ativo))
         setPedidosList(rPedidos.data ?? [])
         setPropostasRecentes(rPropostas.data ?? [])
         setPerfis(rPerfis.data ?? [])
+        const texto = rConfiguracoes?.data?.texto_condicoes_pagamento?.trim()
+        if (texto) {
+          setCondPagtoPadrao(texto)
+          setCondPagto(texto)
+        }
+        if (typeof rConfiguracoes?.data?.setup_minimo === 'number') {
+          setSetupMinimo(Number(rConfiguracoes.data.setup_minimo) || 0)
+        }
+        if (typeof rConfiguracoes?.data?.limite_setup_pessoas === 'number') {
+          setLimiteSetupPessoas(Math.max(1, Number(rConfiguracoes.data.limite_setup_pessoas) || 1))
+        }
       })
       .catch(() => toast.error('Erro ao carregar dados do gerador'))
       .finally(() => setLoadingCatalogos(false))
@@ -374,7 +430,7 @@ export default function OrcamentosPage() {
 
   // ������ Derivações ��������������������������������������������������������������������������������������������������������������������
   const today = new Date().toISOString().split('T')[0]
-  const dataForaPrazo = !!dataEvento && dataEvento < today
+  const dataForaPrazo = !cadastroRetroativo && !!dataEvento && dataEvento < today
 
   const localSelecionado = locaisList.find(l => l.id === localId)
   const empresaSelecionada = empresasList.find(e => e.id === empresaId)
@@ -387,10 +443,13 @@ export default function OrcamentosPage() {
   )
   const subtotalItens = useMemo(() => subtotais.reduce((acc, curr) => acc + curr, 0), [subtotais])
   const hasInfraItem = useMemo(
-    () => items.some(i => i.nome === 'Infraestrutura e Log\u00edstica' && !i.insumoId),
+    () => items.some(i => isAutoLocalItem(i)),
     [items]
   )
-  const taxaLocal = useMemo(() => computeTaxaLocal(localSelecionado, qtdPessoas), [localSelecionado, qtdPessoas])
+  const taxaLocal = useMemo(
+    () => computeTaxaLocal(localSelecionado, qtdPessoas, setupMinimo, limiteSetupPessoas),
+    [localSelecionado, qtdPessoas, setupMinimo, limiteSetupPessoas],
+  )
   const baseCalculo = useMemo(() => subtotalItens + (hasInfraItem ? 0 : taxaLocal), [subtotalItens, hasInfraItem, taxaLocal])
 
   // Modo "Margem %": honorários = % sobre a base; Modo "Por Pessoa": honorários = totalAlvo - base
@@ -423,6 +482,37 @@ export default function OrcamentosPage() {
     [insumosList]
   )
 
+  useEffect(() => {
+    if (!localSelecionado) return
+    const nome = obterAutoLocalNome()
+    const descricao = obterAutoLocalDescricao(localSelecionado.nome)
+    const taxa = computeTaxaLocal(localSelecionado, qtdPessoas, setupMinimo, limiteSetupPessoas)
+    setItems(prev => {
+      let alterou = false
+      const next = prev.map(item => {
+        if (!isAutoLocalItem(item)) return item
+        if (
+          item.nome === nome &&
+          item.descricao === descricao &&
+          item.valorUnit === taxa &&
+          item.qtd === 1
+        ) {
+          return item
+        }
+        alterou = true
+        return {
+          ...item,
+          nome,
+          descricao,
+          valorUnit: taxa,
+          qtd: 1,
+          categoria: 'Infraestrutura',
+        }
+      })
+      return alterou ? next : prev
+    })
+  }, [cadastroRetroativo, localSelecionado, qtdPessoas, setupMinimo, limiteSetupPessoas])
+
   function formatPedidoLabel(p: OrcamentoPendente) {
     return `${p.responsavel} · ${p.empresa_nome} · ${p.modalidade || 'Sem modalidade'}${p.qtd_participantes ? ` · ${p.qtd_participantes} pessoas` : ''}`
   }
@@ -436,6 +526,7 @@ export default function OrcamentosPage() {
     setLocalId('')
     setEventoNome('')
     setDataEvento('')
+    setHoraChegada('')
     setQtdPessoas(0)
     setKmEvento(0)
     setResponsavel('')
@@ -446,29 +537,52 @@ export default function OrcamentosPage() {
     setMargemGlobal(0)
     setModoPreco('margem')
     setPrecoAlvoPessoa(0)
+    setCadastroRetroativo(false)
+    setRetroDetalharEscopo(false)
+    setRetroValorTotal('')
+    setRetroValorPago('')
     setSincronizarQtd(false)
     setItems([{ ...EMPTY_ITEM, id: crypto.randomUUID() }])
     setImagemCircuito('')
-    setCondPagto('50% no aceite e 50% na entrega dos kits')
+    setCondPagto(condPagtoPadrao)
     setCondValidade('10 dias corridos')
     setCondEntrega('Até 2 dias antes do evento')
     setTermos(TERMOS_PADRAO)
   }
 
+  useEffect(() => {
+    const geradas = buildCondicoesFromComercial(comercialEstruturado)
+    setCondPagto(geradas.condPagto)
+    setCondValidade(geradas.condValidade)
+    setCondEntrega(geradas.condEntrega)
+  }, [comercialEstruturado])
+
   function removerItemInfraestrutura() {
-    setItems(prev => prev.filter(i => !(i.nome === 'Infraestrutura e Log\u00edstica' && !i.insumoId)))
+    setItems(prev => prev.filter(i => !isAutoLocalItem(i)))
+  }
+
+  function obterAutoLocalNome() {
+    return cadastroRetroativo ? 'Registro Retroativo Consolidado' : 'Infraestrutura e Log\u00edstica'
+  }
+
+  function obterAutoLocalDescricao(localNome: string) {
+    if (cadastroRetroativo) {
+      return `Registro consolidado do evento retroativo realizado no local ${localNome}.`
+    }
+    return 'Serviços de infraestrutura e logística operacional para execução do evento.'
   }
 
   function aplicarInfraestruturaDoLocal(local: Local, qtdBase: number) {
-    const taxa = computeTaxaLocal(local, qtdBase)
-    const desc = 'Serviços de infraestrutura e logística operacional para execução do evento.'
+    const taxa = computeTaxaLocal(local, qtdBase, setupMinimo, limiteSetupPessoas)
+    const nome = obterAutoLocalNome()
+    const desc = obterAutoLocalDescricao(local.nome)
 
     setItems(prev => [
-      ...prev.filter(i => !(i.nome === 'Infraestrutura e Log\u00edstica' && !i.insumoId)),
+      ...prev.filter(i => !isAutoLocalItem(i)),
       {
         id: crypto.randomUUID(),
         insumoId: '',
-        nome: 'Infraestrutura e Log\u00edstica',
+        nome,
         descricao: desc,
         qtd: 1,
         valorUnit: taxa,
@@ -614,11 +728,54 @@ export default function OrcamentosPage() {
     setTimeout(() => qtdPessoasRef.current?.focus(), 150)
   }
 
+  function focusLocalOption(index: number) {
+    setLocalFocusIndex(index)
+    window.requestAnimationFrame(() => {
+      localOptionRefs.current[index]?.focus()
+    })
+  }
+
+  function getLocalGridColumns() {
+    if (typeof window === 'undefined') return 1
+    return window.matchMedia('(min-width: 640px)').matches ? 2 : 1
+  }
+
+  function handleLocalOptionKeyDown(index: number, event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (locaisFiltrados.length === 0) return
+
+    if (event.key === 'Tab' && !event.shiftKey) {
+      event.preventDefault()
+      localSearchInputRef.current?.focus()
+      return
+    }
+
+    const columns = getLocalGridColumns()
+    let nextIndex = index
+
+    if (event.key === 'ArrowDown') nextIndex = Math.min(index + columns, locaisFiltrados.length - 1)
+    if (event.key === 'ArrowUp') nextIndex = Math.max(index - columns, 0)
+    if (event.key === 'ArrowRight') nextIndex = Math.min(index + 1, locaisFiltrados.length - 1)
+    if (event.key === 'ArrowLeft') nextIndex = Math.max(index - 1, 0)
+    if (event.key === 'Home') nextIndex = 0
+    if (event.key === 'End') nextIndex = locaisFiltrados.length - 1
+
+    if (nextIndex !== index) {
+      event.preventDefault()
+      focusLocalOption(nextIndex)
+      return
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      selecionarLocal(locaisFiltrados[index].id)
+    }
+  }
+
   function aplicarSincronizacaoQTD(enabled: boolean) {
     setSincronizarQtd(enabled)
     if (!enabled) return
     setItems(prev => prev.map(item => (
-      isInfraestruturaItem(item)
+      isAutoLocalItem(item)
         ? { ...item, qtd: 1 }
         : { ...item, qtd: Math.max(qtdPessoas, 1) }
     )))
@@ -629,16 +786,16 @@ export default function OrcamentosPage() {
     setQtdPessoas(next)
     if (sincronizarQtd) {
       setItems(prev => prev.map(item => (
-        isInfraestruturaItem(item)
+        isAutoLocalItem(item)
           ? { ...item, qtd: 1 }
           : { ...item, qtd: Math.max(next, 1) }
       )))
     }
     // Atualiza valorUnit do item de Infraestrutura com base no novo qtd
     if (localSelecionado) {
-      const novoValor = computeTaxaLocal(localSelecionado, next)
+      const novoValor = computeTaxaLocal(localSelecionado, next, setupMinimo, limiteSetupPessoas)
       setItems(prev => prev.map(item =>
-        (!item.insumoId && item.nome === 'Infraestrutura e Log\u00edstica')
+        isAutoLocalItem(item)
           ? { ...item, valorUnit: novoValor }
           : item
       ))
@@ -971,7 +1128,7 @@ export default function OrcamentosPage() {
       })
       // Preserva o item de Infraestrutura e Logística vinculado ao local
       setItems(prev => {
-        const infraItem = prev.find(i => i.nome === 'Infraestrutura e Log\u00edstica' && !i.insumoId)
+        const infraItem = prev.find(i => isAutoLocalItem(i))
         return infraItem ? [...novosItens, infraItem] : novosItens
       })
       setModalAutomacao(false)
@@ -990,7 +1147,13 @@ export default function OrcamentosPage() {
       toast.warning('Preencha cliente, evento e local para salvar a proposta')
       return
     }
-    const itensValidos = items
+    let itensValidos: Array<{
+      insumo_id?: string
+      nome: string
+      descricao: string
+      quantidade: number
+      valor_unitario: number
+    }> = items
       .filter(item => item.nome.trim())
       .map(item => ({
         insumo_id: item.insumoId || undefined,
@@ -999,10 +1162,49 @@ export default function OrcamentosPage() {
         quantidade: Math.max(item.qtd || 0, 0),
         valor_unitario: Math.max(item.valorUnit || 0, 0),
       }))
-    if (itensValidos.length === 0) {
+
+    if (cadastroRetroativo && !retroDetalharEscopo && itensValidos.length === 0 && localSelecionado) {
+      itensValidos = [
+        {
+          insumo_id: undefined,
+          nome: obterAutoLocalNome(),
+          descricao: obterAutoLocalDescricao(localSelecionado.nome),
+          quantidade: 1,
+          valor_unitario: Math.max(taxaLocal, 0),
+        },
+      ]
+    }
+
+    const precisaEscopoDetalhado = !cadastroRetroativo || retroDetalharEscopo
+    if (precisaEscopoDetalhado && itensValidos.length === 0) {
       toast.warning('Adicione ao menos um item no escopo')
       return
     }
+
+    const valorTotalContrato = cadastroRetroativo ? Math.max(Number(retroValorTotal || 0), 0) : totalGeral
+    const valorPagoContrato = cadastroRetroativo ? Math.max(Number(retroValorPago || 0), 0) : 0
+
+    if (cadastroRetroativo && !dataEvento) {
+      toast.warning('Informe a data do evento retroativo')
+      return
+    }
+
+    if (cadastroRetroativo && valorTotalContrato <= 0) {
+      toast.warning('Informe um valor total retroativo maior que zero')
+      return
+    }
+
+    if (cadastroRetroativo && valorPagoContrato > valorTotalContrato) {
+      toast.warning('Valor pago não pode ser maior que o valor total')
+      return
+    }
+
+    const observacoesBase = stripCondicoesTag(stripComercialTag(observacoes)).trim()
+    const comercialTag = buildComercialTag(comercialEstruturado)
+    const condicoesTag = buildCondicoesTag({ condPagto, condValidade, condEntrega })
+    const observacoesComOrigem = cadastroRetroativo
+      ? [`[origem:retroativo] [retroativo:valor_pago=${valorPagoContrato.toFixed(2)}]`, comercialTag, condicoesTag, observacoesBase].filter(Boolean).join(' ')
+      : [comercialTag, condicoesTag, observacoesBase].filter(Boolean).join(' ')
 
     // Abre a aba imediatamente no clique do usuario para evitar bloqueio de pop-up.
     const previewTab = window.open('', '_blank')
@@ -1024,6 +1226,7 @@ export default function OrcamentosPage() {
         telefone,
         evento_nome: eventoNome,
         data_evento: dataEvento || undefined,
+        hora_chegada: horaChegada || undefined,
         local_id: localSelecionado?.id,
         local_nome: localSelecionado?.nome || '',
         cidade_evento: cidadeEvento,
@@ -1033,9 +1236,9 @@ export default function OrcamentosPage() {
         subtotal_itens: subtotalItens,
         taxa_local: taxaLocal,
         valor_margem: valorMargem,
-        valor_total: totalGeral,
+        valor_total: valorTotalContrato,
         preco_ingresso: ticketPorPessoa > 0 ? ticketPorPessoa : undefined,
-        observacoes,
+        observacoes: observacoesComOrigem,
         status: 'Rascunho',
         itens: itensValidos,
       })
@@ -1051,6 +1254,7 @@ export default function OrcamentosPage() {
         telefone,
         evento_nome: eventoNome,
         data_evento: dataEvento || undefined,
+        hora_chegada: horaChegada || undefined,
         local_nome: localSelecionado?.nome || '',
         cidade_evento: cidadeEvento,
         qtd_pessoas: qtdPessoas,
@@ -1059,8 +1263,8 @@ export default function OrcamentosPage() {
         subtotal_itens: subtotalItens,
         taxa_local: taxaLocal,
         valor_margem: valorMargem,
-        valor_total: totalGeral,
-        observacoes,
+        valor_total: valorTotalContrato,
+        observacoes: observacoesComOrigem,
         status: 'Rascunho',
         criado_em: new Date().toISOString(),
         atualizado_em: new Date().toISOString(),
@@ -1079,7 +1283,12 @@ export default function OrcamentosPage() {
       try {
         await orcamentos.converterProposta(r.data.id)
         setPropostasRecentes(prev => prev.map(p => (p.id === r.data.id ? { ...p, status: 'Convertida' } : p)))
-        toast.success('Contrato enviado ao Pipeline em Em Negociação', { id: fluxoToastId })
+        toast.success(
+          cadastroRetroativo
+            ? 'Contrato retroativo registrado no Pipeline como Finalizado'
+            : 'Contrato enviado ao Pipeline em Em Negociação',
+          { id: fluxoToastId }
+        )
       } catch (err) {
         toast.warning((err as Error)?.message || 'Proposta salva, mas não foi possível enviar ao Pipeline automaticamente', { id: fluxoToastId })
       }
@@ -1111,6 +1320,7 @@ export default function OrcamentosPage() {
       enderecoEmpresa,
       eventoNome: eventoNome || 'Evento não informado',
       dataEvento,
+      horaChegada: horaChegada || undefined,
       qtdPessoas,
       kmEvento,
       localNome: localSelecionado?.nome || 'A Definir',
@@ -1120,10 +1330,19 @@ export default function OrcamentosPage() {
       condValidade,
       condEntrega,
       termos,
+      pagamentoEntradaPercent: comercialEstruturado.entradaPercent,
+      pagamentoQtdParcelas: comercialEstruturado.qtdParcelas,
+      pagamentoIntervaloDias: comercialEstruturado.intervaloDias,
+      pagamentoPrimeiroVencimentoDias: comercialEstruturado.primeiroVencimentoDias,
+      validadeDias: comercialEstruturado.validadeDias,
+      entregaDiasAntes: comercialEstruturado.entregaDiasAntes,
       subtotalServicos: subtotalItens,
       honorariosGestao: honorarios,
       ticketMedio: ticketPorPessoa,
-      totalGeral,
+      totalGeral: cadastroRetroativo ? Math.max(Number(retroValorTotal || 0), 0) : totalGeral,
+      isRetroativo: cadastroRetroativo,
+      retroValorTotal: cadastroRetroativo ? Math.max(Number(retroValorTotal || 0), 0) : undefined,
+      retroValorPago: cadastroRetroativo ? Math.max(Number(retroValorPago || 0), 0) : undefined,
       itens: items
         .filter(i => i.nome.trim())
         .map(i => ({
@@ -1140,6 +1359,10 @@ export default function OrcamentosPage() {
     const enderecoEmpresa = emp
       ? [emp.logradouro, emp.numero, emp.bairro, `${emp.cidade}/${emp.uf}`].filter(Boolean).join(', ')
       : 'Não informado'
+    const isRetro = isPropostaRetroativa(p.observacoes)
+    const comercial = parseComercialTag(p.observacoes)
+    const condicoesPersistidas = parseCondicoesTag(p.observacoes)
+    const condicoes = comercial ? buildCondicoesFromComercial(comercial) : null
 
     return {
       nomeEmpresa: p.empresa_nome || 'Cliente não informado',
@@ -1149,14 +1372,28 @@ export default function OrcamentosPage() {
       enderecoEmpresa,
       eventoNome: p.evento_nome || 'Evento não informado',
       dataEvento: p.data_evento,
+      horaChegada: p.hora_chegada,
       qtdPessoas: Number(p.qtd_pessoas || 0),
       kmEvento: Number(p.km_evento || 0),
       localNome: p.local_nome || 'A Definir',
       cidadeEvento: p.cidade_evento || '-',
+      condPagto: condicoesPersistidas?.condPagto || condicoes?.condPagto || condPagtoPadrao,
+      condValidade: condicoesPersistidas?.condValidade || condicoes?.condValidade || condValidade,
+      condEntrega: condicoesPersistidas?.condEntrega || condicoes?.condEntrega || condEntrega,
+      termos,
+      pagamentoEntradaPercent: comercial?.entradaPercent,
+      pagamentoQtdParcelas: comercial?.qtdParcelas,
+      pagamentoIntervaloDias: comercial?.intervaloDias,
+      pagamentoPrimeiroVencimentoDias: comercial?.primeiroVencimentoDias,
+      validadeDias: comercial?.validadeDias,
+      entregaDiasAntes: comercial?.entregaDiasAntes,
       subtotalServicos: Number(p.subtotal_itens || 0),
       honorariosGestao: Number(p.valor_margem || 0),
       ticketMedio: Number(p.qtd_pessoas || 0) > 0 ? Number(p.valor_total || 0) / Number(p.qtd_pessoas || 0) : 0,
       totalGeral: Number(p.valor_total || 0),
+      isRetroativo: isRetro,
+      retroValorTotal: isRetro ? Number(p.valor_total || 0) : undefined,
+      retroValorPago: isRetro ? parseRetroValorPago(p.observacoes) : undefined,
       itens: (p.itens ?? []).map(i => ({
         nome: i.nome,
         descricao: i.descricao || '-',
@@ -1186,14 +1423,28 @@ export default function OrcamentosPage() {
       setLocalId(p.local_id || '')
       setEventoNome(p.evento_nome || '')
       setDataEvento(p.data_evento || '')
+      setHoraChegada(p.hora_chegada || '')
       setQtdPessoas(Number(p.qtd_pessoas || 0))
       setKmEvento(Number(p.km_evento || 0))
       setResponsavel(p.responsavel || '')
       setEmail(p.email || '')
       setTelefone(p.telefone || '')
       setCidadeEvento(p.cidade_evento || '')
-      setObservacoes(p.observacoes || '')
+      setObservacoes(stripCondicoesTag(stripComercialTag(p.observacoes || '')))
       setMargemGlobal(Number(p.margem_percent || 0))
+      const comercial = parseComercialTag(p.observacoes)
+      const condicoesPersistidas = parseCondicoesTag(p.observacoes)
+      if (comercial) {
+        setComercialEstruturado(comercial)
+        const condicoes = buildCondicoesFromComercial(comercial)
+        setCondPagto(condicoesPersistidas?.condPagto || condicoes.condPagto)
+        setCondValidade(condicoesPersistidas?.condValidade || condicoes.condValidade)
+        setCondEntrega(condicoesPersistidas?.condEntrega || condicoes.condEntrega)
+      } else if (condicoesPersistidas) {
+        setCondPagto(condicoesPersistidas.condPagto || condPagto)
+        setCondValidade(condicoesPersistidas.condValidade || condValidade)
+        setCondEntrega(condicoesPersistidas.condEntrega || condEntrega)
+      }
       const itensCarregados = (p.itens ?? []).map(item => ({
         id: item.id || crypto.randomUUID(),
         insumoId: item.insumo_id || '',
@@ -1232,6 +1483,15 @@ export default function OrcamentosPage() {
     ),
     [locaisList, deferredBuscaLocal]
   )
+
+  useEffect(() => {
+    if (!modalLocal) return
+    if (locaisFiltrados.length === 0) return
+
+    const selectedIndex = locaisFiltrados.findIndex(l => l.id === localId)
+    const nextIndex = selectedIndex >= 0 ? selectedIndex : 0
+    focusLocalOption(nextIndex)
+  }, [modalLocal, locaisFiltrados, localId])
   const propostasFiltradas = useMemo(() => {
     if (!propostasQTerm) return propostasRecentes
     return propostasRecentes.filter(p =>
@@ -1289,10 +1549,56 @@ export default function OrcamentosPage() {
             </CardHeader>
             <CardContent className="space-y-4">
 
+              <div className="flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50/70 px-3 py-2">
+                <div>
+                  <p className="text-sm font-semibold text-indigo-700">Cadastrar Evento Retroativo</p>
+                  <p className="text-xs text-indigo-600">Ative para permitir data passada e informar valor total/pago real.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCadastroRetroativo(prev => {
+                      const next = !prev
+                      if (next) {
+                        setRetroValorTotal(totalGeral > 0 ? totalGeral.toFixed(2) : '')
+                        setRetroValorPago('0')
+                        setRetroDetalharEscopo(false)
+                      } else {
+                        setRetroValorTotal('')
+                        setRetroValorPago('')
+                        setRetroDetalharEscopo(false)
+                      }
+                      return next
+                    })
+                  }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${cadastroRetroativo ? 'bg-indigo-600' : 'bg-zinc-300'}`}
+                  aria-label="Alternar cadastro retroativo"
+                >
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${cadastroRetroativo ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+
+              {cadastroRetroativo && (
+                <div className="flex items-center justify-between rounded-lg border border-indigo-200/80 bg-indigo-50/30 px-3 py-2">
+                  <div>
+                    <p className="text-sm font-semibold text-indigo-700">Detalhar Escopo do Orçamento</p>
+                    <p className="text-xs text-indigo-600">Ative somente se quiser lançar itens detalhados do evento retroativo.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRetroDetalharEscopo(prev => !prev)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${retroDetalharEscopo ? 'bg-indigo-600' : 'bg-zinc-300'}`}
+                    aria-label="Alternar detalhamento do escopo retroativo"
+                  >
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${retroDetalharEscopo ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              )}
+
               {/* Vincular pedido público */}
               <section className="rounded-lg border border-border bg-card p-3 space-y-2">
                 <Label className="text-xs font-bold uppercase tracking-wide text-primary">
-                  Vincular Solicitação do Formulário Público
+                  Novos Pedidos - Formulário Público
                 </Label>
                 {pedidosList.length === 0 ? (
                   <p className="text-sm text-green-600 dark:text-green-400 font-medium">✅ Nenhum novo pedido no momento.</p>
@@ -1460,12 +1766,16 @@ export default function OrcamentosPage() {
                   <BufferedInput value={eventoNome} onCommit={setEventoNome} transformOnBlur={formatEventName} placeholder="Ex: Corrida Corporativa 5K" autoCapitalize="words" />
                 </Field>
                 <Field label="Data Prevista" className="md:col-span-3">
-                  <Input type="date" min={today} value={dataEvento} onChange={e => setDataEvento(e.target.value)} />
+                  <Input type="date" min={cadastroRetroativo ? undefined : today} value={dataEvento} onChange={e => setDataEvento(e.target.value)} />
                   {dataForaPrazo && <p className="text-xs text-destructive mt-1">A data do evento não pode ser no passado.</p>}
                 </Field>
 
+                <Field label="Hora de Chegada" className="md:col-span-2">
+                  <Input type="time" value={horaChegada} onChange={e => setHoraChegada(e.target.value)} />
+                </Field>
+
                 {/* Local � abre modal */}
-                <div className="md:col-span-4 space-y-1.5">
+                <div className="md:col-span-2 space-y-1.5">
                   <Label className="text-xs text-muted-foreground uppercase tracking-wide">Local do Evento</Label>
                   <button
                     type="button"
@@ -1491,11 +1801,23 @@ export default function OrcamentosPage() {
                 <Field label="Cidade" className="md:col-span-6">
                   <BufferedInput value={cidadeEvento} onCommit={setCidadeEvento} transformOnBlur={formatPersonName} placeholder="Cidade do evento" autoCapitalize="words" />
                 </Field>
+
+                {cadastroRetroativo && (
+                  <>
+                    <Field label="Valor total (retroativo)" className="md:col-span-3">
+                      <Input type="number" min={0} step="0.01" value={retroValorTotal} onChange={e => setRetroValorTotal(e.target.value)} placeholder="0,00" />
+                    </Field>
+                    <Field label="Valor pago (retroativo)" className="md:col-span-3">
+                      <Input type="number" min={0} step="0.01" value={retroValorPago} onChange={e => setRetroValorPago(e.target.value)} placeholder="0,00" />
+                    </Field>
+                  </>
+                )}
               </div>
             </CardContent>
           </Card>
 
           {/* Card escopo */}
+          {(!cadastroRetroativo || retroDetalharEscopo) && (
           <Card className="shadow-sm">
             <CardHeader className="pb-2 border-b">
               <div className="flex items-center gap-2 flex-wrap">
@@ -1586,7 +1908,7 @@ export default function OrcamentosPage() {
                   <RTableBody>
                     {items.map((item, idx) => {
                       const subtotal = subtotais[idx] || 0
-                      const isInfra = !item.insumoId && !!item.nome
+                      const isInfra = isAutoLocalItem(item)
                       return (
                         <RTableRow key={item.id}>
                           <RTableCell className="align-top">
@@ -1763,6 +2085,7 @@ export default function OrcamentosPage() {
               </div>
             </CardContent>
           </Card>
+          )}
           {/* Card: Imagem do Circuito / Evento */}
           <Card className="border-0 shadow-sm">
             <CardHeader className="pb-3 border-b">
@@ -1825,28 +2148,124 @@ export default function OrcamentosPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-4 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Field label="Forma de Pagamento">
-                  <Input
-                    value={condPagto}
-                    onChange={e => setCondPagto(e.target.value)}
-                    placeholder="Ex: 50% no aceite"
-                  />
-                </Field>
-                <Field label="Validade da Proposta">
-                  <Input
-                    value={condValidade}
-                    onChange={e => setCondValidade(e.target.value)}
-                    placeholder="Ex: 10 dias corridos"
-                  />
-                </Field>
-                <Field label="Prazo de Entrega">
-                  <Input
-                    value={condEntrega}
-                    onChange={e => setCondEntrega(e.target.value)}
-                    placeholder="Ex: Até 2 dias antes"
-                  />
-                </Field>
+              <div className="rounded-lg border bg-muted/20 p-3 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Parâmetros estruturados das condições comerciais</p>
+                  <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Texto automático no PDF</Badge>
+                </div>
+                <div className="rounded-md border border-orange-200 bg-orange-50/70 px-3 py-2 text-xs text-orange-900">
+                  <p className="font-semibold">Como preencher:</p>
+                  <p>
+                    Use estes campos para definir a regra comercial da proposta. Exemplo comum: entrada de 50%, saldo em 2 parcelas,
+                    30 dias entre cada parcela e primeiro vencimento 7 dias após a assinatura.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-1">
+                  <div className="space-y-0.5">
+                    <Label className="text-xs text-muted-foreground">Entrada (%)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={comercialEstruturado.entradaPercent}
+                      onChange={e => {
+                        const v = Number(e.target.value || 0)
+                        setComercialEstruturado(prev => ({ ...prev, entradaPercent: v, ...(v === 0 ? { qtdParcelas: 1 } : {}) }))
+                      }}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <Label className="text-xs text-muted-foreground">Total de parcelas</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={24}
+                      value={comercialEstruturado.qtdParcelas}
+                      readOnly={comercialEstruturado.entradaPercent === 0}
+                      onChange={e => setComercialEstruturado(prev => ({ ...prev, qtdParcelas: Number(e.target.value || 1) }))}
+                      className={`h-8 text-xs${comercialEstruturado.entradaPercent === 0 ? ' bg-muted text-muted-foreground cursor-not-allowed' : ''}`}
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <Label className="text-xs text-muted-foreground">Dias entre parcelas</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={comercialEstruturado.intervaloDias}
+                      onChange={e => setComercialEstruturado(prev => ({ ...prev, intervaloDias: Number(e.target.value || 30) }))}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <Label className="text-xs text-muted-foreground">Primeiro vencimento (D+)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={120}
+                      value={comercialEstruturado.primeiroVencimentoDias}
+                      onChange={e => setComercialEstruturado(prev => ({ ...prev, primeiroVencimentoDias: Number(e.target.value || 0) }))}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <Label className="text-xs text-muted-foreground">Validade (dias)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={comercialEstruturado.validadeDias}
+                      onChange={e => setComercialEstruturado(prev => ({ ...prev, validadeDias: Number(e.target.value || 10) }))}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <Label className="text-xs text-muted-foreground">Entrega antes (dias)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={60}
+                      value={comercialEstruturado.entregaDiasAntes}
+                      onChange={e => setComercialEstruturado(prev => ({ ...prev, entregaDiasAntes: Number(e.target.value || 0) }))}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2">
+                  <div className="grid grid-cols-1 gap-1 text-xs text-amber-900 sm:grid-cols-2 lg:grid-cols-3">
+                  <p><strong>Entrada (%):</strong> percentual cobrado no aceite/assinatura.</p>
+                  <p><strong>Total de parcelas:</strong> quantidade total combinada com o cliente.</p>
+                  <p><strong>Dias entre parcelas:</strong> intervalo entre um vencimento e o próximo.</p>
+                  <p><strong>Primeiro vencimento em D+:</strong> quantos dias após a assinatura vence a 1ª parcela.</p>
+                  <p><strong>Validade:</strong> por quantos dias a proposta comercial fica válida.</p>
+                  <p><strong>Entrega antes do evento:</strong> prazo prometido para entrega do material/kit.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Prévia da proposta (texto final)</p>
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-900">
+                <p>
+                  <strong>Resumo para conferência:</strong> os três campos abaixo mostram como ficará o texto final exibido na proposta/PDF.
+                </p>
+              </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">Forma de Pagamento</Label>
+                  <div className="min-h-10 rounded-md border bg-muted/20 px-3 py-2 text-sm">{condPagto}</div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">Validade da Proposta</Label>
+                  <div className="min-h-10 rounded-md border bg-muted/20 px-3 py-2 text-sm">{condValidade}</div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">Prazo de Entrega</Label>
+                  <div className="min-h-10 rounded-md border bg-muted/20 px-3 py-2 text-sm">{condEntrega}</div>
+                </div>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Regras do Mini-Contrato (Editável)</Label>
@@ -2015,6 +2434,9 @@ export default function OrcamentosPage() {
                         <div className="flex items-center justify-between mt-1 gap-2">
                           <p className="text-xs font-medium text-emerald-700">{formatCurrency(Number(p.valor_total || 0))}</p>
                           <div className="flex items-center gap-1">
+                            {isPropostaRetroativa(p.observacoes) && (
+                              <Badge variant="outline" className="text-[10px] h-4 border-indigo-300 bg-indigo-50 text-indigo-700">Retroativo</Badge>
+                            )}
                             <Badge variant="outline" className={`text-[10px] h-4 ${statusBadgeClass(p.status)}`}>{p.status || 'Rascunho'}</Badge>
                             <Button
                               type="button"
@@ -2042,7 +2464,7 @@ export default function OrcamentosPage() {
           <Card className="border-0 shadow-sm">
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-base">Novos Pedidos</CardTitle>
+                <CardTitle className="text-base">Novos Pedidos - Formulário Público</CardTitle>
                 <div className="flex items-center gap-1">
                   {pedidosList.length > 0 && (
                     <Badge variant="secondary">{pedidosList.length}</Badge>
@@ -2115,7 +2537,14 @@ export default function OrcamentosPage() {
       />
 
       <Dialog open={modalLocal} onOpenChange={setModalLocal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent
+          className="max-w-2xl"
+          initialFocus={() => {
+            const selectedIndex = locaisFiltrados.findIndex(l => l.id === localId)
+            const nextIndex = selectedIndex >= 0 ? selectedIndex : 0
+            return localOptionRefs.current[nextIndex] ?? undefined
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MapPin className="h-4 w-4" /> Selecionar Local do Evento
@@ -2125,11 +2554,17 @@ export default function OrcamentosPage() {
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
+                ref={localSearchInputRef}
                 className="pl-8"
                 placeholder="Buscar por nome, cidade ou tipo..."
                 value={buscaLocal}
                 onChange={e => setBuscaLocal(e.target.value)}
-                autoFocus
+                onKeyDown={event => {
+                  if (event.key === 'ArrowDown' && locaisFiltrados.length > 0) {
+                    event.preventDefault()
+                    focusLocalOption(0)
+                  }
+                }}
               />
             </div>
 
@@ -2137,12 +2572,16 @@ export default function OrcamentosPage() {
               <p className="text-sm text-muted-foreground text-center py-8">Nenhum local encontrado.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[420px] overflow-y-auto pr-1">
-                {locaisFiltrados.map(l => (
+                {locaisFiltrados.map((l, idx) => (
                   <button
                     type="button"
                     key={l.id}
+                    ref={el => { localOptionRefs.current[idx] = el }}
+                    tabIndex={idx === localFocusIndex ? 0 : -1}
+                    onFocus={() => setLocalFocusIndex(idx)}
+                    onKeyDown={event => handleLocalOptionKeyDown(idx, event)}
                     onClick={() => selecionarLocal(l.id)}
-                    className={`text-left rounded-lg border p-3 hover:bg-muted/40 transition-colors ${localId === l.id ? 'border-primary bg-primary/5' : ''}`}
+                    className={`text-left rounded-lg border p-3 transition-colors outline-none ${idx === localFocusIndex ? 'border-[#f25c05] bg-orange-50/60 ring-2 ring-[#f25c05]/20' : 'hover:bg-muted/40'} ${localId === l.id ? 'border-primary bg-primary/5' : ''}`}
                   >
                     <p className="font-semibold text-sm">{l.nome}</p>
                     <p className="text-xs text-muted-foreground">

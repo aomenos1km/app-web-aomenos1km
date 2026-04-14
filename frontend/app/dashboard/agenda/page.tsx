@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { toast } from 'sonner'
 import { contratos, participantes, usuariosEquipe, Contrato, Participante, UsuarioEquipe } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,7 +19,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -43,7 +41,6 @@ import {
   Search,
   Users,
   Wallet,
-  ExternalLink,
 } from 'lucide-react'
 
 type AgendaView = 'mes' | 'semana' | 'lista'
@@ -177,6 +174,11 @@ export default function AgendaPage() {
   const [detailTab, setDetailTab] = useState<DetailTab>('resumo')
   const [usuariosList, setUsuariosList] = useState<UsuarioEquipe[]>([])
 
+  function openEventDetails(evento: EventoAgenda) {
+    setSelectedEvent(evento)
+    setDetailLoading(true)
+  }
+
   useEffect(() => {
     contratos
       .listar()
@@ -194,13 +196,10 @@ export default function AgendaPage() {
 
   useEffect(() => {
     if (!selectedEvent) {
-      setDetailEvento(null)
-      setDetailParts([])
       return
     }
 
     let active = true
-    setDetailLoading(true)
 
     Promise.all([
       contratos.buscar(selectedEvent.id),
@@ -475,10 +474,14 @@ export default function AgendaPage() {
                 <Skeleton key={i} className="h-14 w-full" />
               ))}
             </div>
-          ) : filtered.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Nenhum evento encontrado com os filtros aplicados</p>
           ) : (
             <>
+              {filtered.length === 0 && view !== 'lista' && (
+                <p className="pb-4 text-center text-sm text-muted-foreground">
+                  Nenhum evento encontrado com os filtros aplicados
+                </p>
+              )}
+
               {view === 'mes' && (
                 <div>
                   <div className="mb-2 grid grid-cols-7 gap-2 text-center text-xs text-muted-foreground">
@@ -530,7 +533,7 @@ export default function AgendaPage() {
                                 <button
                                   key={item.id}
                                   type="button"
-                                  onClick={() => setSelectedEvent(item)}
+                                  onClick={() => openEventDetails(item)}
                                   className={cn(
                                     'flex w-full items-center gap-1 rounded border px-1.5 py-1 text-left text-[11px] leading-tight',
                                     theme.chip,
@@ -579,7 +582,7 @@ export default function AgendaPage() {
                               <button
                                 key={item.id}
                                 type="button"
-                                onClick={() => setSelectedEvent(item)}
+                                onClick={() => openEventDetails(item)}
                                 className={cn(
                                   'w-full rounded border px-2 py-1 text-left text-xs',
                                   theme.chip,
@@ -607,7 +610,7 @@ export default function AgendaPage() {
                       <button
                         key={item.id}
                         type="button"
-                        onClick={() => setSelectedEvent(item)}
+                        onClick={() => openEventDetails(item)}
                         className="flex w-full items-center gap-4 rounded px-2 py-3 text-left hover:bg-muted/50"
                       >
                         <div className="w-14 shrink-0 text-center">
@@ -639,7 +642,7 @@ export default function AgendaPage() {
                     )
                   })}
 
-                  {listUpcoming.length === 0 && (
+                  {filtered.length === 0 && (
                     <p className="py-10 text-center text-sm text-muted-foreground">Nenhum evento futuro para exibir na lista</p>
                   )}
                 </div>
@@ -659,7 +662,10 @@ export default function AgendaPage() {
       <Dialog
         open={!!selectedEvent}
         onOpenChange={open => {
-          if (!open) setSelectedEvent(null)
+          if (!open) {
+            setSelectedEvent(null)
+            setDetailLoading(false)
+          }
         }}
       >
         <DialogContent className="max-h-[92vh] max-w-7xl overflow-y-auto">
@@ -696,14 +702,6 @@ export default function AgendaPage() {
                     Financeiro
                   </Button>
                 </div>
-
-                <Button
-                  variant="outline"
-                  nativeButton={false}
-                  render={<Link href={`/dashboard/contratos/${selectedEvent.id}`} />}
-                >
-                  <ExternalLink className="h-4 w-4 mr-1" /> Abrir no pipeline (opcional)
-                </Button>
               </div>
 
               {detailLoading ? (

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useTheme } from 'next-themes'
@@ -26,20 +26,13 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname()
   const { logout, user } = useAuth()
   const { setTheme, theme, resolvedTheme } = useTheme()
-  const [collapsed, setCollapsed] = useState(false)
-  const [mounted, setMounted] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('sidebar-collapsed') === '1'
+  })
   const grouped = useMemo(() => groupSectionsByCategory(), [])
 
-  useEffect(() => {
-    const saved = localStorage.getItem('sidebar-collapsed')
-    if (saved === '1') setCollapsed(true)
-  }, [])
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  const isDark = mounted && (theme === 'dark' || (theme === 'system' && resolvedTheme === 'dark'))
+  const isDark = theme === 'dark' || (theme === 'system' && resolvedTheme === 'dark')
 
   function toggleTheme() {
     setTheme(isDark ? 'light' : 'dark')

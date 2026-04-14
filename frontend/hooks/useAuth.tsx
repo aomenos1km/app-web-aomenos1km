@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useContext, useState, ReactNode } from 'react'
 import { auth, LoginResponse } from '@/lib/api'
 
 interface AuthUser {
@@ -20,21 +20,21 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+function getStoredUser(): AuthUser | null {
+  if (typeof window === 'undefined') return null
+
+  const token = sessionStorage.getItem('token')
+  const nome = sessionStorage.getItem('nome')
+  const perfil = sessionStorage.getItem('perfil')
+  const id = sessionStorage.getItem('user_id')
+
+  if (!token || !nome || !perfil || !id) return null
+  return { token, nome, perfil, id }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const token = sessionStorage.getItem('token')
-    const nome = sessionStorage.getItem('nome')
-    const perfil = sessionStorage.getItem('perfil')
-    const id = sessionStorage.getItem('user_id')
-
-    if (token && nome && perfil && id) {
-      setUser({ token, nome, perfil, id })
-    }
-    setLoading(false)
-  }, [])
+  const [user, setUser] = useState<AuthUser | null>(getStoredUser)
+  const [loading] = useState(false)
 
   async function login(loginVal: string, senha: string) {
     const res = await auth.login(loginVal, senha)

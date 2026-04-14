@@ -9,8 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 
-import { empresas, orcamentos, Proposta, PropostaDetalhe } from '@/lib/api'
+import { configuracoes, empresas, orcamentos, Proposta, PropostaDetalhe } from '@/lib/api'
 import { abrirPreviewProposta, PropostaPdfData } from '@/lib/proposta-pdf'
+import { buildCondicoesFromComercial, parseComercialTag, parseCondicoesTag } from '@/lib/proposta-comercial'
 import { useAuth } from '@/hooks/useAuth'
 import { FileText, Lock, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { RTable, RTableHeader, RTableHead, RTableBody, RTableRow, RTableCell } from '@/components/ui/responsive-table'
@@ -35,13 +36,27 @@ function statusBadgeClass(status?: string) {
   }
 }
 
+function isPropostaRetroativa(observacoes?: string) {
+  return String(observacoes || '').toLowerCase().includes('[origem:retroativo]')
+}
+
+function parseRetroValorPago(observacoes?: string) {
+  const texto = String(observacoes || '')
+  const match = texto.match(/\[retroativo:valor_pago=([0-9]+(?:\.[0-9]+)?)\]/i)
+  if (!match) return 0
+  const parsed = Number(match[1])
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 export default function HistoricoPropostasPage() {
   const { user } = useAuth()
   const isAdmin = user?.perfil === 'Admin'
   const isConsultor = user?.perfil === 'Consultor'
   const [loading, setLoading] = useState(true)
   const [propostas, setPropostas] = useState<Proposta[]>([])
+  const [condPagtoPadrao, setCondPagtoPadrao] = useState('50% no aceite e 50% na entrega dos kits')
   const [q, setQ] = useState('')
+  const [filtroTipo, setFiltroTipo] = useState<'comerciais' | 'retroativas' | 'todas'>('comerciais')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [deleteOneId, setDeleteOneId] = useState<string | null>(null)
   const [deleteManyOpen, setDeleteManyOpen] = useState(false)
@@ -49,6 +64,20 @@ export default function HistoricoPropostasPage() {
 
   useEffect(() => {
     carregar()
+  }, [])
+
+  useEffect(() => {
+    let ativo = true
+    configuracoes.buscar()
+      .then(r => {
+        if (!ativo) return
+        const texto = r.data?.texto_condicoes_pagamento?.trim()
+        if (texto) setCondPagtoPadrao(texto)
+      })
+      .catch(() => {})
+    return () => {
+      ativo = false
+    }
   }, [])
 
   useEffect(() => {
@@ -72,11 +101,17 @@ export default function HistoricoPropostasPage() {
 
   const propostasFiltradas = useMemo(() => {
     const term = q.trim().toLowerCase()
-    if (!term) return propostas
-    return propostas.filter(p =>
+    const porTipo = propostas.filter(p => {
+      const retro = isPropostaRetroativa(p.observacoes)
+      if (filtroTipo === 'retroativas') return retro
+      if (filtroTipo === 'comerciais') return !retro
+      return true
+    })
+    if (!term) return porTipo
+    return porTipo.filter(p =>
       `${p.empresa_nome} ${p.evento_nome} ${p.responsavel} ${p.status} ${p.valor_total}`.toLowerCase().includes(term),
     )
-  }, [propostas, q])
+  }, [filtroTipo, propostas, q])
 
   const allVisibleSelected = propostasFiltradas.length > 0 && propostasFiltradas.every(p => selectedIds.includes(p.id))
 
@@ -95,6 +130,10 @@ export default function HistoricoPropostasPage() {
   }
 
   function toPdfData(p: PropostaDetalhe, documentoEmpresa?: string, enderecoEmpresa?: string): PropostaPdfData {
+    const isRetro = isPropostaRetroativa(p.observacoes)
+    const comercial = parseComercialTag(p.observacoes)
+    const condicoesPersistidas = parseCondicoesTag(p.observacoes)
+    const condicoes = comercial ? buildCondicoesFromComercial(comercial) : null
     return {
       nomeEmpresa: p.empresa_nome || 'Cliente não informado',
       documentoEmpresa: documentoEmpresa || '-',
@@ -103,11 +142,23 @@ export default function HistoricoPropostasPage() {
       enderecoEmpresa: enderecoEmpresa || 'Não informado',
       eventoNome: p.evento_nome || 'Evento não informado',
       dataEvento: p.data_evento,
+      condPagto: condicoesPersistidas?.condPagto || condicoes?.condPagto || condPagtoPadrao,
+      condValidade: condicoesPersistidas?.condValidade || condicoes?.condValidade || '10 dias corridos',
+      condEntrega: condicoesPersistidas?.condEntrega || condicoes?.condEntrega || 'Até 2 dias antes do evento',
+      pagamentoEntradaPercent: comercial?.entradaPercent,
+      pagamentoQtdParcelas: comercial?.qtdParcelas,
+      pagamentoIntervaloDias: comercial?.intervaloDias,
+      pagamentoPrimeiroVencimentoDias: comercial?.primeiroVencimentoDias,
+      validadeDias: comercial?.validadeDias,
+      entregaDiasAntes: comercial?.entregaDiasAntes,
       qtdPessoas: Number(p.qtd_pessoas || 0),
       kmEvento: Number(p.km_evento || 0),
       localNome: p.local_nome || 'A Definir',
       cidadeEvento: p.cidade_evento || '-',
       totalGeral: Number(p.valor_total || 0),
+      isRetroativo: isRetro,
+      retroValorTotal: isRetro ? Number(p.valor_total || 0) : undefined,
+      retroValorPago: isRetro ? parseRetroValorPago(p.observacoes) : undefined,
       itens: (p.itens ?? []).map(i => ({
         nome: i.nome,
         descricao: i.descricao || '-',
@@ -216,6 +267,29 @@ export default function HistoricoPropostasPage() {
           />
         </div>
         <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-md border bg-white p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setFiltroTipo('comerciais')}
+              className={`rounded px-2 py-1 ${filtroTipo === 'comerciais' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+            >
+              Comerciais
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltroTipo('retroativas')}
+              className={`rounded px-2 py-1 ${filtroTipo === 'retroativas' ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}
+            >
+              Retroativas
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltroTipo('todas')}
+              className={`rounded px-2 py-1 ${filtroTipo === 'todas' ? 'bg-zinc-700 text-white' : 'text-slate-600'}`}
+            >
+              Todas
+            </button>
+          </div>
           <Button variant="outline" size="sm" onClick={carregar}>
             <RefreshCw className="h-4 w-4 mr-1" /> Atualizar
           </Button>
@@ -280,7 +354,10 @@ export default function HistoricoPropostasPage() {
                       </div>
                       <div>
                         <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Status</p>
-                        <Badge variant="outline" className={statusBadgeClass(p.status)}>{p.status || 'Rascunho'}</Badge>
+                        <div className="flex items-center gap-1">
+                          {isPropostaRetroativa(p.observacoes) && <Badge variant="outline" className="border-indigo-300 bg-indigo-50 text-indigo-700">Retroativo</Badge>}
+                          <Badge variant="outline" className={statusBadgeClass(p.status)}>{p.status || 'Rascunho'}</Badge>
+                        </div>
                       </div>
                       <div>
                         <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">PDF</p>
@@ -348,7 +425,10 @@ export default function HistoricoPropostasPage() {
                         <RTableCell>{p.evento_nome || '—'}</RTableCell>
                         <RTableCell className="font-semibold text-emerald-700">{formatCurrency(Number(p.valor_total || 0))}</RTableCell>
                         <RTableCell>
-                          <Badge variant="outline" className={statusBadgeClass(p.status)}>{p.status || 'Rascunho'}</Badge>
+                          <div className="flex items-center gap-1">
+                            {isPropostaRetroativa(p.observacoes) && <Badge variant="outline" className="border-indigo-300 bg-indigo-50 text-indigo-700">Retroativo</Badge>}
+                            <Badge variant="outline" className={statusBadgeClass(p.status)}>{p.status || 'Rascunho'}</Badge>
+                          </div>
                         </RTableCell>
                         <RTableCell>
                           <Button variant="ghost" size="icon" onClick={() => void abrirPdfProposta(p.id)}>

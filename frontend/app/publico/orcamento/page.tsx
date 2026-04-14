@@ -34,6 +34,13 @@ const FALLBACK_CONFIG: ConfiguracaoPublicaPreco = {
   preco_backup_trofeu: 45,
   setup_minimo: 1200,
   limite_setup_pessoas: 150,
+  formas_pagamento_disponiveis: ['PIX', 'Transferência', 'Boleto', 'Cartão'],
+  max_parcelas_sem_juros: 3,
+  permite_parcelamento_pix_transferencia_boleto: false,
+  entrada_min_percent: 30,
+  multa_atraso_percent: 2,
+  juros_mes_percent: 1,
+  texto_condicoes_pagamento: 'Entrada mínima de 30% na assinatura e saldo até a data do evento.',
   preco_base_por_pessoa: 143.5,
 }
 
@@ -257,7 +264,7 @@ export default function OrcamentoPublicoPage() {
     const qtdInformada = Number(form.qtd_participantes || 0)
     const qtd = Math.max(30, qtdInformada)
     const total = qtd * precoUnitario
-    if (qtd < precoConfig.limite_setup_pessoas) {
+    if (qtd <= precoConfig.limite_setup_pessoas) {
       return Math.max(total, precoConfig.setup_minimo)
     }
     return total

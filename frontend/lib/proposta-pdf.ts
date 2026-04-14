@@ -13,6 +13,7 @@ export type PropostaPdfData = {
   enderecoEmpresa?: string
   eventoNome: string
   dataEvento?: string
+  horaChegada?: string
   qtdPessoas: number
   kmEvento: number
   localNome?: string
@@ -22,15 +23,45 @@ export type PropostaPdfData = {
   condValidade?: string
   condEntrega?: string
   termos?: string
+  pagamentoEntradaPercent?: number
+  pagamentoQtdParcelas?: number
+  pagamentoIntervaloDias?: number
+  pagamentoPrimeiroVencimentoDias?: number
+  validadeDias?: number
+  entregaDiasAntes?: number
   subtotalServicos?: number
   honorariosGestao?: number
   ticketMedio?: number
   totalGeral: number
+  isRetroativo?: boolean
+  retroValorTotal?: number
+  retroValorPago?: number
   itens: PropostaPdfItem[]
 }
 
 function formatCurrency(value: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function formatDocument(value?: string) {
+  const digits = String(value || '').replace(/\D/g, '')
+
+  if (digits.length === 11) {
+    return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')
+  }
+
+  if (digits.length === 14) {
+    return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
+  }
+
+  return value || '-'
+}
+
+function getDocumentLabel(value?: string) {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length === 11) return 'CPF'
+  if (digits.length === 14) return 'CNPJ'
+  return 'CNPJ/CPF'
 }
 
 async function loadLogoDataUrl() {
@@ -51,6 +82,18 @@ function buildHtmlContent(data: PropostaPdfData, logoUrl: string, refId: string,
   const dataEventoFmt = data.dataEvento
     ? new Date(data.dataEvento + 'T12:00:00').toLocaleDateString('pt-BR')
     : 'A Definir'
+  const horaChegadaRaw = String(data.horaChegada || '').trim()
+  const horaChegadaFmt = /^\d{1,2}:\d{2}$/.test(horaChegadaRaw)
+    ? horaChegadaRaw.padStart(5, '0').slice(0, 5)
+    : 'A Definir'
+  const horaLargadaFmt = (() => {
+    if (!/^\d{2}:\d{2}$/.test(horaChegadaFmt)) return 'A Definir'
+    const [h, m] = horaChegadaFmt.split(':').map(Number)
+    const total = (h * 60 + m + 60) % (24 * 60)
+    const nh = String(Math.floor(total / 60)).padStart(2, '0')
+    const nm = String(total % 60).padStart(2, '0')
+    return `${nh}:${nm}`
+  })()
 
   const blocoMapaHtml = data.imagemCircuito
     ? `<div style="margin-top:25px;text-align:center;page-break-inside:avoid;">
@@ -79,8 +122,37 @@ function buildHtmlContent(data: PropostaPdfData, logoUrl: string, refId: string,
   const subtotalServicos = Number(data.subtotalServicos || 0)
   const honorariosGestao = Number(data.honorariosGestao || 0)
   const ticketMedio = Number(data.ticketMedio || 0)
+  const documentoEmpresa = formatDocument(data.documentoEmpresa)
+  const documentoLabel = getDocumentLabel(data.documentoEmpresa)
   const consultorNome = String(data.consultorNome || '').trim()
   const assinaturaConsultor = consultorNome ? `Consultor: ${consultorNome}` : 'Consultor'
+  const retroTotalBase = data.retroValorTotal !== undefined ? data.retroValorTotal : data.totalGeral
+  const retroTotal = Number(retroTotalBase || 0)
+  const retroPago = Number(data.retroValorPago || 0)
+  const retroSaldo = Math.max(retroTotal - retroPago, 0)
+  const faixaRetroativo = data.isRetroativo
+    ? '<div style="margin-top:6px;display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid #1d4ed8;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:bold;text-transform:uppercase;">Cadastro Retroativo</div>'
+    : ''
+  const blocoFinanceiroRetroativo = data.isRetroativo
+    ? `
+      <div style="margin-top:12px;border:1px solid #dbeafe;border-radius:8px;overflow:hidden;page-break-inside:avoid;">
+        <div style="padding:8px 12px;background:#eff6ff;font-size:10px;font-weight:bold;color:#1d4ed8;text-transform:uppercase;">Financeiro Retroativo</div>
+        <table style="width:100%;border-collapse:collapse;">
+          <tr>
+            <td style="padding:10px 12px;background:#fafafa;font-weight:bold;color:#334155;">Valor total registrado</td>
+            <td style="padding:10px 12px;background:#fafafa;text-align:right;font-weight:bold;color:#334155;">${formatCurrency(retroTotal)}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;font-weight:bold;color:#166534;">Valor pago informado</td>
+            <td style="padding:10px 12px;text-align:right;font-weight:bold;color:#166534;">${formatCurrency(retroPago)}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 12px;background:#fafafa;font-weight:bold;color:#92400e;">Saldo em aberto</td>
+            <td style="padding:10px 12px;background:#fafafa;text-align:right;font-weight:bold;color:#92400e;">${formatCurrency(retroSaldo)}</td>
+          </tr>
+        </table>
+      </div>`
+    : ''
 
   return `<!DOCTYPE html>
 <html><head>
@@ -108,6 +180,7 @@ function buildHtmlContent(data: PropostaPdfData, logoUrl: string, refId: string,
       <td style="width:50%;vertical-align:middle;">${logoUrl ? `<img src="${logoUrl}" width="130">` : '<b style="font-size:18px;color:#F25C05;">AOMENOS1KM</b>'}</td>
       <td style="width:50%;text-align:right;vertical-align:middle;">
         <div class="header-title">PROPOSTA COMERCIAL</div>
+        ${faixaRetroativo}
         <div class="header-meta">Ref: #${refId}</div>
         <div class="header-meta">Emissão: ${dataEmissao}</div>
       </td>
@@ -117,7 +190,7 @@ function buildHtmlContent(data: PropostaPdfData, logoUrl: string, refId: string,
         <td style="width:55%;padding-right:25px;vertical-align:top;border-right:1px solid #eee;">
           <div class="label">DADOS DO CLIENTE</div>
           <span class="info-title">${(data.nomeEmpresa || 'Cliente não informado').toUpperCase()}</span>
-          <div class="info-text"><b>CNPJ/CPF:</b> ${data.documentoEmpresa || '-'}</div>
+          <div class="info-text"><b>${documentoLabel}:</b> ${documentoEmpresa}</div>
           <div class="info-text"><b>Aos cuidados de:</b> ${data.responsavel || 'Responsável'}</div>
           <div class="info-text"><b>Endereço:</b> ${data.enderecoEmpresa || 'Não informado'}</div>
         </td>
@@ -125,6 +198,8 @@ function buildHtmlContent(data: PropostaPdfData, logoUrl: string, refId: string,
           <div class="label">SOBRE O EVENTO</div>
           <span class="info-title">${data.eventoNome || 'Evento não informado'}</span>
           <div class="info-text"><b>Data Prevista:</b> ${dataEventoFmt}</div>
+          <div class="info-text"><b>Chegada:</b> ${horaChegadaFmt}</div>
+          <div class="info-text"><b>Largada Oficial:</b> ${horaLargadaFmt}</div>
           <div class="info-text"><b>Público Alvo:</b> ${data.qtdPessoas || 0} pessoas</div>
           <div class="info-text"><b>Quilometragem:</b> ${data.kmEvento || 0} km</div>
           <div class="info-text"><b>Local:</b> ${data.localNome || 'A Definir'}</div>
@@ -169,12 +244,14 @@ function buildHtmlContent(data: PropostaPdfData, logoUrl: string, refId: string,
         </table>
       </div>
 
+      ${blocoFinanceiroRetroativo}
+
       <div class="terms-box">
-        <div class="label" style="margin-top:0;">CONDIÇÕES COMERCIAIS</div>
+        <div class="label" style="margin-top:0;">CONDIÇÕES DE PAGAMENTO</div>
         <div class="terms-text">
-          <b>Pagamento:</b> ${data.condPagto || 'A combinar'} &nbsp;&bull;&nbsp;
-          <b>Validade:</b> ${data.condValidade || 'A combinar'} &nbsp;&bull;&nbsp;
-          <b>Entrega:</b> ${data.condEntrega || 'A combinar'}
+          <b>Pagamento:</b> ${data.condPagto || 'A combinar'}<br>
+          <b>Validade:</b> ${data.condValidade || 'A combinar'}<br>
+          <b>Entrega dos kits:</b> ${data.condEntrega || 'A combinar'}
         </div>
         <div class="linha-separadora"></div>
         <div class="label">TERMOS GERAIS</div>

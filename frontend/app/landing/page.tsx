@@ -7,16 +7,8 @@ import { ArrowRight, Mail, CheckCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { transmissao } from '@/lib/api'
 
-// Progresso do desenvolvimento — ajuste conforme quiser
-const START_DATE = new Date('2026-02-09').getTime()
-const LAUNCH_DATE = new Date('2026-05-15').getTime()
-
-function calcProgress() {
-  const now = Date.now()
-  const total = LAUNCH_DATE - START_DATE
-  const elapsed = now - START_DATE
-  return Math.min(Math.max(Math.round((elapsed / total) * 100), 0), 99)
-}
+// Progresso fixo da landing (não evolui automaticamente por data)
+const FIXED_PROGRESS = 63
 
 export default function LandingPage() {
   const [progress, setProgress] = useState(0)
@@ -29,7 +21,7 @@ export default function LandingPage() {
 
   useEffect(() => {
     setMounted(true)
-    const p = calcProgress()
+    const p = FIXED_PROGRESS
     setProgress(p)
     // Anima a barra suavemente ao carregar
     const timeout = setTimeout(() => setAnimatedProgress(p), 200)

@@ -44,37 +44,41 @@ func ListarParticipantes(c *gin.Context) {
 	}
 
 	rows, err := db.Pool.Query(ctx, `
-		SELECT id,
-		       contrato_id,
-		       COALESCE(nome, ''),
-		       COALESCE(whatsapp, ''),
-		       COALESCE(email, ''),
-		       COALESCE(tamanho_camiseta, ''),
-		       COALESCE(modalidade, ''),
-		       data_inscricao,
-		       COALESCE(cpf, ''),
-		       nascimento::text,
-		       COALESCE(cidade, ''),
-		       COALESCE(modalidade_distancia, ''),
-		       COALESCE(tempo_pratica, ''),
-		       COALESCE(tem_assessoria, ''),
-		       COALESCE(objetivo, ''),
-		       COALESCE(apto_fisico, false),
-		       COALESCE(termo_responsabilidade, false),
-		       COALESCE(uso_imagem, false),
-		       COALESCE(interesse_assessoria, false),
-		       COALESCE(formato_interesse, ''),
-		       COALESCE(como_conheceu, ''),
-		       COALESCE(observacoes, ''),
-		       COALESCE(uf, ''),
-		       COALESCE(comprovante_url, ''),
-		       COALESCE(status_pagamento, ''),
-		       numero_kit,
-		       criado_em,
-		       atualizado_em
-		FROM participantes
-		WHERE contrato_id = $1
-		ORDER BY nome ASC
+		SELECT p.id,
+		       p.contrato_id,
+		       COALESCE(p.nome, ''),
+		       COALESCE(NULLIF(p.whatsapp, ''), COALESCE(titular.whatsapp, '')),
+		       COALESCE(p.email, ''),
+		       COALESCE(p.tamanho_camiseta, ''),
+		       COALESCE(p.modalidade, ''),
+		       p.data_inscricao,
+		       COALESCE(p.cpf, ''),
+		       p.nascimento::text,
+		       COALESCE(p.cidade, ''),
+		       COALESCE(p.modalidade_distancia, ''),
+		       COALESCE(p.tempo_pratica, ''),
+		       COALESCE(p.tem_assessoria, ''),
+		       COALESCE(p.objetivo, ''),
+		       COALESCE(p.apto_fisico, false),
+		       COALESCE(p.termo_responsabilidade, false),
+		       COALESCE(p.uso_imagem, false),
+		       COALESCE(p.interesse_assessoria, false),
+		       COALESCE(p.formato_interesse, ''),
+		       COALESCE(p.como_conheceu, ''),
+		       COALESCE(p.observacoes, ''),
+		       COALESCE(p.uf, ''),
+		       COALESCE(p.comprovante_url, ''),
+		       COALESCE(p.status_pagamento, ''),
+		       p.numero_kit,
+		       p.criado_em,
+		       p.atualizado_em,
+		       p.genero_identidade,
+		       p.inscricao_relacionamento,
+		       p.inscricao_titular_id
+		FROM participantes p
+		LEFT JOIN participantes titular ON titular.id = p.inscricao_titular_id
+		WHERE p.contrato_id = $1
+		ORDER BY p.nome ASC
 	`, contratoID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
@@ -93,6 +97,7 @@ func ListarParticipantes(c *gin.Context) {
 			&p.UsoImagem, &p.InteresseAssessoria, &p.FormatoInteresse, &p.ComoConheceu,
 			&p.Observacoes, &p.UF, &p.ComprovanteURL, &p.StatusPagamento,
 			&p.NumeroKit, &p.CriadoEm, &p.AtualizadoEm,
+			&p.GeneroIdentidade, &p.InscricaoRelacionamento, &p.InscricaoTitularID,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: fmt.Sprintf("erro ao ler participante: %v", err)})
@@ -133,6 +138,16 @@ func eventoRequerPagamento(empresaNome string, precoIngresso float64) bool {
 	return empresaEhAomenos1km(empresaNome)
 }
 
+func normalizarTamanhoCamiseta(valor string) string {
+	v := strings.ToUpper(strings.TrimSpace(valor))
+	switch v {
+	case "P", "M", "G", "GG", "XG":
+		return v
+	default:
+		return ""
+	}
+}
+
 // CriarParticipante realiza o check-in de um participante (rota pública via token do evento)
 func CriarParticipante(c *gin.Context) {
 	var input models.ParticipanteInput
@@ -163,6 +178,17 @@ func CriarParticipante(c *gin.Context) {
 		return
 	}
 	eventoPago := eventoRequerPagamento(empresaNome, precoIngresso)
+	permiteDependentes := empresaEhAomenos1km(empresaNome)
+	if !permiteDependentes {
+		input.Dependentes = nil
+	}
+
+	input.TamanhoCamiseta = normalizarTamanhoCamiseta(input.TamanhoCamiseta)
+	if input.TamanhoCamiseta == "" {
+		input.TamanhoCamiseta = "P"
+	}
+
+	totalIngressos := 1 + len(input.Dependentes)
 
 	var inscritos int
 	inscritosQuery := `SELECT COUNT(*) FROM participantes WHERE contrato_id = $1`
@@ -176,55 +202,107 @@ func CriarParticipante(c *gin.Context) {
 	}
 	_ = db.Pool.QueryRow(context.Background(), inscritosQuery, input.ContratoID).Scan(&inscritos)
 
-	if inscritos >= qtdContratada {
+	if inscritos+totalIngressos > qtdContratada {
+		vagasRestantes := qtdContratada - inscritos
+		if vagasRestantes < 0 {
+			vagasRestantes = 0
+		}
 		c.JSON(http.StatusConflict, models.APIResponse{
 			Success: false,
-			Error:   "Evento lotado. Não há mais vagas disponíveis.",
+			Error:   fmt.Sprintf("Vagas insuficientes para esta inscrição em grupo. Restam %d vaga(s).", vagasRestantes),
 		})
 		return
 	}
 
-	// Evita duplicidade pelo CPF no mesmo evento
-	var existente int
-	_ = db.Pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM participantes WHERE contrato_id = $1 AND cpf = $2`,
-		input.ContratoID, input.CPF,
-	).Scan(&existente)
-
-	if existente > 0 {
-		c.JSON(http.StatusConflict, models.APIResponse{
-			Success: false,
-			Error:   "Este CPF já está registrado neste evento.",
-		})
-		return
+	cpfsNovos := map[string]string{}
+	if cpfTitular := cpfNormalizado(input.CPF); cpfTitular != "" {
+		cpfsNovos[cpfTitular] = strings.TrimSpace(input.Nome)
 	}
+	for _, dep := range input.Dependentes {
+		cpfDep := cpfNormalizado(dep.CPF)
+		if cpfDep == "" {
+			c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "CPF do dependente é obrigatório."})
+			return
+		}
+		if _, exists := cpfsNovos[cpfDep]; exists {
+			c.JSON(http.StatusConflict, models.APIResponse{Success: false, Error: "Há CPF repetido entre titular e dependentes desta inscrição."})
+			return
+		}
+		cpfsNovos[cpfDep] = strings.TrimSpace(dep.Nome)
+	}
+	for cpf, nomeRef := range cpfsNovos {
+		existe, statusExistente, err := cpfJaExisteNoEvento(context.Background(), input.ContratoID, cpf)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: "Erro ao validar CPF no evento."})
+			return
+		}
+		if existe {
+			erro := "Este CPF já está cadastrado neste evento. Use outro CPF para esta inscrição."
+			if strings.TrimSpace(statusExistente) != "" && !strings.EqualFold(strings.TrimSpace(statusExistente), "Confirmado") {
+				erro = "Este CPF já possui inscrição pendente neste evento. Use outro CPF para esta inscrição."
+			}
+			if nomeRef != "" && nomeRef != strings.TrimSpace(input.Nome) {
+				erro = fmt.Sprintf("O CPF do dependente %s já está cadastrado neste evento. Use outro CPF para esta inscrição.", nomeRef)
+				if strings.TrimSpace(statusExistente) != "" && !strings.EqualFold(strings.TrimSpace(statusExistente), "Confirmado") {
+					erro = fmt.Sprintf("O dependente %s já possui inscrição pendente neste evento. Use outro CPF para esta inscrição.", nomeRef)
+				}
+			}
+			c.JSON(http.StatusConflict, models.APIResponse{Success: false, Error: erro})
+			return
+		}
+	}
+
+	input.CPF = cpfNormalizado(input.CPF)
 
 	// Converte nascimento "YYYY-MM-DD" → date
 	var nascimento interface{}
 	if input.Nascimento != "" {
 		nascimento = input.Nascimento
 	}
+	var generoIdentidade interface{}
+	if strings.TrimSpace(input.GeneroIdentidade) != "" {
+		generoIdentidade = strings.TrimSpace(input.GeneroIdentidade)
+	}
+	var inscricaoRelacionamento interface{}
+	if strings.TrimSpace(input.InscricaoRelacionamento) != "" {
+		inscricaoRelacionamento = strings.TrimSpace(input.InscricaoRelacionamento)
+	}
+	var inscricaoTitularID interface{}
+	if strings.TrimSpace(input.InscricaoTitularID) != "" {
+		inscricaoTitularID = strings.TrimSpace(input.InscricaoTitularID)
+	}
+
+	tx, err := db.Pool.Begin(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: "Falha ao iniciar a inscrição."})
+		return
+	}
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
 
 	var id string
 	statusPagamento := "Confirmado"
 	if eventoPago {
 		statusPagamento = "Pendente"
 	}
-	err = db.Pool.QueryRow(context.Background(), `
+	err = tx.QueryRow(context.Background(), `
 		INSERT INTO participantes (
 			contrato_id, nome, whatsapp, email, tamanho_camiseta, modalidade,
 			cpf, nascimento, cidade, modalidade_distancia, tempo_pratica,
 			tem_assessoria, objetivo, apto_fisico, termo_responsabilidade,
 			uso_imagem, interesse_assessoria, formato_interesse, como_conheceu,
-			observacoes, uf, comprovante_url, status_pagamento
+			observacoes, uf, comprovante_url, status_pagamento,
+			genero_identidade, inscricao_relacionamento, inscricao_titular_id
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
 		) RETURNING id`,
 		input.ContratoID, input.Nome, input.Whatsapp, input.Email, input.TamanhoCamiseta, input.Modalidade,
 		input.CPF, nascimento, input.Cidade, input.ModalidadeDistancia, input.TempoPratica,
 		input.TemAssessoria, input.Objetivo, input.AptoFisico, input.TermoResponsabilidade,
 		input.UsoImagem, input.InteresseAssessoria, input.FormatoInteresse, input.ComoConheceu,
 		input.Observacoes, input.UF, input.ComprovanteURL, statusPagamento,
+		generoIdentidade, inscricaoRelacionamento, inscricaoTitularID,
 	).Scan(&id)
 
 	if err != nil {
@@ -232,20 +310,78 @@ func CriarParticipante(c *gin.Context) {
 		return
 	}
 
+	for _, dep := range input.Dependentes {
+		cpfDependente := cpfNormalizado(dep.CPF)
+		tamanhoDependente := normalizarTamanhoCamiseta(dep.TamanhoCamiseta)
+		if tamanhoDependente == "" {
+			tamanhoDependente = "P"
+		}
+		var nascimentoDependente interface{}
+		if strings.TrimSpace(dep.Nascimento) != "" {
+			nascimentoDependente = strings.TrimSpace(dep.Nascimento)
+		}
+		var relacionamentoDependente interface{}
+		if strings.TrimSpace(dep.Relacionamento) != "" {
+			relacionamentoDependente = strings.TrimSpace(dep.Relacionamento)
+		}
+		var dependenteID string
+		err = tx.QueryRow(context.Background(), `
+			INSERT INTO participantes (
+				contrato_id, nome, whatsapp, email, tamanho_camiseta, modalidade,
+				cpf, nascimento, cidade, modalidade_distancia, tempo_pratica,
+				tem_assessoria, objetivo, apto_fisico, termo_responsabilidade,
+				uso_imagem, interesse_assessoria, formato_interesse, como_conheceu,
+				observacoes, uf, comprovante_url, status_pagamento,
+				genero_identidade, inscricao_relacionamento, inscricao_titular_id
+			) VALUES (
+				$1,$2,$3,'',$4,$5,$6,$7,$8,$9,'','','',$10,$11,$12,false,'','',$13,$14,'',$15,NULL,$16,$17
+			) RETURNING id`,
+			input.ContratoID,
+			strings.TrimSpace(dep.Nome),
+			input.Whatsapp,
+			tamanhoDependente,
+			input.Modalidade,
+			cpfDependente,
+			nascimentoDependente,
+			input.Cidade,
+			input.ModalidadeDistancia,
+			input.AptoFisico,
+			input.TermoResponsabilidade,
+			input.UsoImagem,
+			fmt.Sprintf("Dependente vinculado ao titular %s", strings.TrimSpace(input.Nome)),
+			input.UF,
+			statusPagamento,
+			relacionamentoDependente,
+			id,
+		).Scan(&dependenteID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+	}
+
 	checkoutURL := ""
 	if eventoPago {
-		checkoutURL, err = gerarCheckoutAsaas(input, precoIngresso, empresaNome, nomeEvento, id, dataEvento)
+		checkoutURL, err = gerarCheckoutAsaas(input, precoIngresso*float64(totalIngressos), empresaNome, nomeEvento, id, dataEvento)
 		if err != nil {
-			_, _ = db.Pool.Exec(context.Background(), `DELETE FROM participantes WHERE id = $1`, id)
 			c.JSON(http.StatusBadGateway, models.APIResponse{Success: false, Error: "Falha ao gerar pagamento. Tente novamente em instantes."})
 			return
 		}
-		_, _ = db.Pool.Exec(context.Background(), `UPDATE participantes SET comprovante_url = $1 WHERE id = $2`, checkoutURL, id)
+		_, _ = tx.Exec(context.Background(), `
+			UPDATE participantes
+			SET comprovante_url = $1
+			WHERE id = $2 OR inscricao_titular_id = $2
+		`, checkoutURL, id)
+	}
+
+	if err := tx.Commit(context.Background()); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: "Falha ao concluir inscrição."})
+		return
 	}
 
 	// Dispara notificações assíncronas de ocupação
 	if !eventoPago {
-		novoTotal := inscritos + 1
+		novoTotal := inscritos + totalIngressos
 		go dispararNotificacaoOcupacao(input.ContratoID, empresaNome, nomeEvento, descricaoContrato, novoTotal, qtdContratada)
 	}
 	publishParticipantesAtualizados(input.ContratoID, id, "criado")
@@ -298,6 +434,48 @@ func shouldLogAsaasDescription() bool {
 	return appEnv == "dev" || appEnv == "development" || goEnv == "dev" || goEnv == "development" || ginMode == "debug" || ginMode == ""
 }
 
+func nomesCobrancaAsaas(input models.ParticipanteInput) []string {
+	nomes := []string{}
+	if nome := strings.TrimSpace(input.Nome); nome != "" {
+		nomes = append(nomes, nome)
+	}
+	for _, dep := range input.Dependentes {
+		if nome := strings.TrimSpace(dep.Nome); nome != "" {
+			nomes = append(nomes, nome)
+		}
+	}
+	return nomes
+}
+
+func montarDescricaoCobrancaAsaas(evento, dataEventoDescricao string, input models.ParticipanteInput) string {
+	evento = strings.TrimSpace(evento)
+	if evento == "" {
+		evento = "Evento"
+	}
+	dataEventoDescricao = strings.TrimSpace(dataEventoDescricao)
+	if dataEventoDescricao == "" {
+		dataEventoDescricao = "-"
+	}
+
+	nomesParticipantes := nomesCobrancaAsaas(input)
+	participantesLinha := "Participantes: -"
+	if len(nomesParticipantes) > 0 {
+		participantesLinha = fmt.Sprintf("Participantes: %s", strings.Join(nomesParticipantes, ", "))
+	}
+
+	descricao := strings.TrimSpace(fmt.Sprintf(
+		"Evento: %s\nData Evento: %s\nQtd Ingressos: %d\n%s",
+		evento,
+		dataEventoDescricao,
+		1+len(input.Dependentes),
+		participantesLinha,
+	))
+	if len(descricao) > 500 {
+		descricao = descricao[:500]
+	}
+	return descricao
+}
+
 func gerarCheckoutAsaas(input models.ParticipanteInput, valor float64, empresaNome, nomeEvento, participanteID string, dataEvento *string) (string, error) {
 	apiKey := strings.TrimSpace(os.Getenv("ASAAS_API_KEY"))
 	if apiKey == "" {
@@ -341,20 +519,8 @@ func gerarCheckoutAsaas(input models.ParticipanteInput, valor float64, empresaNo
 			}
 		}
 	}
-	nomeParticipante := strings.TrimSpace(input.Nome)
-	if nomeParticipante == "" {
-		nomeParticipante = "Participante"
-	}
 	// Cada informação fica em sua própria linha para melhorar leitura no Asaas.
-	descricao := strings.TrimSpace(fmt.Sprintf(
-		"Evento: %s\nData Evento: %s\nQtd Ingresso: 1\nParticipante: %s",
-		evento,
-		dataEventoDescricao,
-		nomeParticipante,
-	))
-	if len(descricao) > 500 {
-		descricao = descricao[:500]
-	}
+	descricao := montarDescricaoCobrancaAsaas(evento, dataEventoDescricao, input)
 	if shouldLogAsaasDescription() {
 		fmt.Printf("[ASAAS DEBUG] participante=%s descricao=%q\n", participanteID, descricao)
 	}
@@ -481,6 +647,31 @@ func somenteDigitos(value string) string {
 	return b.String()
 }
 
+func cpfNormalizado(value string) string {
+	return somenteDigitos(strings.TrimSpace(value))
+}
+
+func cpfJaExisteNoEvento(ctx context.Context, contratoID, cpf string) (bool, string, error) {
+	cpf = cpfNormalizado(cpf)
+	if cpf == "" {
+		return false, "", nil
+	}
+
+	var existentes int
+	var statusPagamento string
+	err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*), COALESCE(MAX(status_pagamento), '')
+		FROM participantes
+		WHERE contrato_id = $1
+		  AND regexp_replace(COALESCE(cpf, ''), '[^0-9]', '', 'g') = $2
+	`, contratoID, cpf).Scan(&existentes, &statusPagamento)
+	if err != nil {
+		return false, "", err
+	}
+
+	return existentes > 0, statusPagamento, nil
+}
+
 // EditarParticipante permite editar dados de um participante
 func EditarParticipante(c *gin.Context) {
 	id := c.Param("id")
@@ -509,6 +700,7 @@ func EditarParticipante(c *gin.Context) {
 		c.JSON(http.StatusNotFound, models.APIResponse{Success: false, Error: "Participante não encontrado"})
 		return
 	}
+	input.CPF = cpfNormalizado(input.CPF)
 
 	result, err := db.Pool.Exec(ctx, `
 		UPDATE participantes SET
@@ -600,12 +792,15 @@ func HistoricoParticipantes(c *gin.Context) {
 	busca := c.Query("q")
 	authUser := getAuthzUser(c)
 	query := `
-		SELECT p.id, p.contrato_id, p.nome, p.whatsapp, p.email,
+		SELECT p.id, p.contrato_id, p.nome,
+		       COALESCE(NULLIF(p.whatsapp, ''), COALESCE(titular.whatsapp, '')) AS whatsapp,
+		       p.email,
 		       p.tamanho_camiseta, p.modalidade, p.data_inscricao,
 		       p.cpf, p.cidade, p.uf, p.status_pagamento, p.criado_em,
 		       c.nome_evento, c.empresa_nome, c.data_evento
 		FROM participantes p
 		LEFT JOIN contratos c ON c.id = p.contrato_id
+		LEFT JOIN participantes titular ON titular.id = p.inscricao_titular_id
 		WHERE 1=1`
 
 	args := []interface{}{}
@@ -744,6 +939,20 @@ func notificarOcupacaoAtualContrato(contratoID string) {
 	dispararNotificacaoOcupacao(contratoID, empresaNome, nomeEvento, descricaoContrato, inscritos, qtdContratada)
 }
 
+func jaNotificouListaAberta(contratoID string) bool {
+	var total int
+	err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*)
+		FROM notificacoes
+		WHERE contrato_id = $1
+		  AND LOWER(COALESCE(titulo, '')) LIKE '%lista aberta%'
+	`, contratoID).Scan(&total)
+	if err != nil {
+		return false
+	}
+	return total > 0
+}
+
 // dispararNotificacaoOcupacao cria notificação interna e dispara WhatsApp para admin
 func dispararNotificacaoOcupacao(contratoID string, empresaNome, nomeEvento, descricaoContrato string, inscritos, total int) {
 	if total == 0 {
@@ -755,9 +964,9 @@ func dispararNotificacaoOcupacao(contratoID string, empresaNome, nomeEvento, des
 	contexto := montarContextoNotificacaoEvento(contratoID, empresaNome, nomeEvento, descricaoContrato)
 
 	switch {
-	case inscritos == 1:
+	case inscritos > 0 && !jaNotificouListaAberta(contratoID):
 		titulo = "🚀 Lista Aberta!"
-		mensagem = fmt.Sprintf("%s — Primeiro check-in realizado (1/%d).", contexto, total)
+		mensagem = fmt.Sprintf("%s — Primeira confirmação de pagamento realizada (%d/%d).", contexto, inscritos, total)
 	case pct == 30:
 		titulo = "👍 30%% das vagas preenchidas"
 		mensagem = fmt.Sprintf("%s — %d/%d vagas ocupadas.", contexto, inscritos, total)
@@ -829,17 +1038,27 @@ func VerificarStatusPagamento(c *gin.Context) {
 		return
 	}
 
-	// Busca o participante
-	var contratID, statusAtual, nome, whatsapp, comprovanteAtual string
+	// Busca o participante e identifica se ele pertence a uma inscrição em grupo
+	var contratID, statusAtual, nome, whatsapp, comprovanteAtual, inscricaoTitularID string
 	err := db.Pool.QueryRow(context.Background(), `
-		SELECT contrato_id, status_pagamento, nome, whatsapp, COALESCE(comprovante_url, '')
+		SELECT contrato_id,
+		       status_pagamento,
+		       nome,
+		       whatsapp,
+		       COALESCE(comprovante_url, ''),
+		       COALESCE(inscricao_titular_id::text, '')
 		FROM participantes
 		WHERE id = $1`,
 		participanteID,
-	).Scan(&contratID, &statusAtual, &nome, &whatsapp, &comprovanteAtual)
+	).Scan(&contratID, &statusAtual, &nome, &whatsapp, &comprovanteAtual, &inscricaoTitularID)
 	if err != nil {
 		c.JSON(404, models.APIResponse{Success: false, Error: "Participante não encontrado"})
 		return
+	}
+
+	referenciaPagamentoID := participanteID
+	if strings.TrimSpace(inscricaoTitularID) != "" {
+		referenciaPagamentoID = strings.TrimSpace(inscricaoTitularID)
 	}
 
 	// Se já confirmado, retorna sucesso
@@ -849,7 +1068,7 @@ func VerificarStatusPagamento(c *gin.Context) {
 	}
 
 	// Verifica o status do pagamento na Asaas
-	statusAsaas, comprovanteURL, err := verificarPagamentoNaAsaas(participanteID)
+	statusAsaas, comprovanteURL, err := verificarPagamentoNaAsaas(referenciaPagamentoID)
 	if err != nil {
 		// Se falhar na Asaas, retorna o status atual
 		c.JSON(200, models.APIResponse{Success: true, Data: gin.H{"status": statusAtual, "comprovante_url": comprovanteAtual, "pagamento_confirmado": false}})
@@ -867,9 +1086,9 @@ func VerificarStatusPagamento(c *gin.Context) {
 				status_pagamento = 'Confirmado',
 				comprovante_url = CASE WHEN $2 <> '' THEN $2 ELSE comprovante_url END,
 				atualizado_em = NOW()
-			WHERE id = $1`, participanteID, comprovanteURL,
+			WHERE id = $1 OR inscricao_titular_id = $1`, referenciaPagamentoID, comprovanteURL,
 		)
-		publishParticipantesAtualizados(contratID, participanteID, "pagamento_confirmado")
+		publishParticipantesAtualizados(contratID, referenciaPagamentoID, "pagamento_confirmado")
 		go notificarOcupacaoAtualContrato(contratID)
 
 		// Envia WhatsApp atualizando que pagamento foi confirmado
@@ -936,4 +1155,77 @@ func verificarPagamentoNaAsaas(participanteID string) (string, string, error) {
 	}
 
 	return "PENDING", "", nil
+}
+
+// ValidarDuplicacaoCPF verifica se existe inscrição duplicada para um CPF em um evento
+// GET /api/participantes/validar-duplicacao?cpf=XXX&evento_id=YYY
+func ValidarDuplicacaoCPF(c *gin.Context) {
+	cpf := strings.TrimSpace(c.Query("cpf"))
+	eventoID := strings.TrimSpace(c.Query("evento_id"))
+
+	if cpf == "" || eventoID == "" {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "CPF e evento_id são obrigatórios",
+		})
+		return
+	}
+
+	// Remove formatação do CPF
+	cpfLimpo := somenteDigitos(cpf)
+	if len(cpfLimpo) != 11 {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "CPF inválido",
+		})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Busca inscrições para este CPF no evento, ignorando máscara/formatação
+	existe, statusPagamento, err := cpfJaExisteNoEvento(ctx, eventoID, cpfLimpo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "Erro ao validar",
+		})
+		return
+	}
+
+	// Se não existe nenhuma inscrição
+	if !existe {
+		c.JSON(http.StatusOK, models.APIResponse{
+			Success: true,
+			Data: gin.H{
+				"existe":         false,
+				"pode_inscrever": true,
+				"status":         "disponivel",
+			},
+		})
+		return
+	}
+
+	// Se existe, bloqueia nova inscrição e informa o estado atual
+	statusFinalizada := statusPagamento == "Confirmado" ||
+		statusPagamento == "CONFIRMED" ||
+		statusPagamento == "RECEIVED" ||
+		statusPagamento == "RECEIVED_IN_CASH"
+
+	mensagemBloqueio := "Este CPF já está cadastrado neste evento. Use outro CPF para esta inscrição."
+	if !statusFinalizada && strings.TrimSpace(statusPagamento) != "" {
+		mensagemBloqueio = "Este CPF já possui inscrição pendente neste evento. Use outro CPF para esta inscrição."
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data: gin.H{
+			"existe":            true,
+			"pode_inscrever":    false,
+			"status":            statusPagamento,
+			"status_finalizado": statusFinalizada,
+			"mensagem_bloqueio": mensagemBloqueio,
+			"mensagem_aviso":    mensagemBloqueio,
+		},
+	})
 }

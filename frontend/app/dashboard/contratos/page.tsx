@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { toast } from 'sonner'
 import { contratos, Contrato, ContratoPipelineStatus } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
@@ -10,9 +9,10 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { ContratoDetalhesModal } from '@/components/dashboard/ContratoDetalhesModal'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { Search, ExternalLink, RefreshCw, Copy, Star, Zap, FileText, Clock, CheckCheck, Trash2, Building2, Users, MapPinned } from 'lucide-react'
+import { Search, RefreshCw, Copy, Star, Zap, FileText, Clock, CheckCheck, Trash2, Building2, Users, MapPinned } from 'lucide-react'
 
 type CardOrigemInfo = { isSite: boolean; isGerador: boolean; isInterno: boolean }
 
@@ -66,6 +66,16 @@ function colunaBordaLateral(status: ContratoPipelineStatus) {
   return 'border-l-emerald-500'
 }
 
+function isPastEvent(value?: string) {
+  if (!value) return false
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return false
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  d.setHours(0, 0, 0, 0)
+  return d < hoje
+}
+
 export default function ContratosPage() {
   const { user } = useAuth()
   const isConsultor = user?.perfil === 'Consultor'
@@ -77,6 +87,7 @@ export default function ContratosPage() {
   const [savingDrop, setSavingDrop] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Contrato | null>(null)
+  const [modalContratoId, setModalContratoId] = useState<string | null>(null)
   const publicFormUrl = typeof window !== 'undefined' ? `${window.location.origin}/publico/orcamento` : '/publico/orcamento'
 
   function carregar() {
@@ -102,6 +113,7 @@ export default function ContratosPage() {
     const ativos = list
       .map(c => ({ ...c, status: normalizeStatus(c.status) || c.status }))
       .filter(c => normalizeStatus(c.status) && normalizeStatus(c.status) !== 'Cancelado' && normalizeStatus(c.status) !== 'Expirado' && normalizeStatus(c.status) !== 'Finalizado')
+      .filter(c => !isPastEvent(c.data_evento))
 
     if (!term) return ativos
     return ativos.filter(c =>
@@ -178,11 +190,6 @@ export default function ContratosPage() {
           <p className="text-sm text-muted-foreground">{filtrados.length} card(s) ativo(s)</p>
         </div>
         <div className="flex items-center gap-2">
-          {isAdmin && (
-            <Link href="/dashboard/contratos/retroativo">
-              <Button size="sm">Cadastrar Evento Retroativo</Button>
-            </Link>
-          )}
           <Button
             variant="outline"
             size="sm"
@@ -346,9 +353,13 @@ export default function ContratosPage() {
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             )}
-                            <Link href={`/dashboard/contratos/${c.id}`} className="text-xs text-[#f25c05] dark:text-orange-400 inline-flex items-center gap-1 hover:opacity-80">
-                              Abrir <ExternalLink className="h-3.5 w-3.5" />
-                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => setModalContratoId(c.id)}
+                              className="text-xs text-[#f25c05] dark:text-orange-400 inline-flex items-center gap-1 hover:opacity-80"
+                            >
+                              Abrir
+                            </button>
                           </div>
                         </div>
                       )
@@ -380,6 +391,14 @@ export default function ContratosPage() {
         onConfirm={() => void excluirNovoPedidoConfirmado()}
         confirmDisabled={Boolean(deletingId)}
         destructive
+      />
+
+      <ContratoDetalhesModal
+        open={Boolean(modalContratoId)}
+        contratoId={modalContratoId}
+        onOpenChange={open => {
+          if (!open) setModalContratoId(null)
+        }}
       />
     </div>
   )

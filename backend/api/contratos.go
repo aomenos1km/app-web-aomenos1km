@@ -12,6 +12,8 @@ import (
 	"github.com/aomenos1km/app-web/db"
 	"github.com/aomenos1km/app-web/models"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -262,14 +264,21 @@ func ListarContratos(c *gin.Context) {
 	query := `
 		SELECT 
 			c.id, c.data_criacao::text, c.empresa_id, COALESCE(c.empresa_nome, ''), COALESCE(c.descricao, ''),
-			COALESCE(c.valor_total, 0), c.data_evento::text, c.local_id, COALESCE(c.local_nome, ''), COALESCE(c.modalidade, ''),
+			COALESCE(c.valor_total, 0), c.data_evento::text, COALESCE(c.hora_chegada, ''), c.local_id, COALESCE(c.local_nome, ''), COALESCE(c.modalidade, ''),
 			COALESCE(c.qtd_contratada, 0), COALESCE(c.qtd_kit, 0), COALESCE(c.km, ''), COALESCE(c.status, ''), COALESCE(c.valor_pago, 0),
 			c.data_pagamento::text, COALESCE(c.consultor, ''), COALESCE(c.possui_kit, false), COALESCE(c.tipo_kit, ''),
 			COALESCE(c.link_gateway, ''), COALESCE(c.qr_code_pix, ''), COALESCE(c.nome_evento, ''), COALESCE(c.capa_url, ''),
 			COALESCE(c.observacoes, ''), COALESCE(c.pix_copia_cola, ''), c.criado_em, c.atualizado_em,
-			COUNT(p.id) AS qtd_inscritos
+			COUNT(p.id) AS qtd_inscritos,
+			COALESCE(MAX(e_id.responsavel), MAX(e_nome.responsavel), '') AS responsavel_empresa
 		FROM contratos c
 		LEFT JOIN participantes p ON p.contrato_id = c.id
+		LEFT JOIN empresas e_id   ON e_id.id = c.empresa_id
+		LEFT JOIN empresas e_nome ON e_nome.id IS DISTINCT FROM e_id.id
+		                         AND (
+							 REGEXP_REPLACE(LOWER(TRIM(COALESCE(e_nome.razao_social, ''))), '[^a-z0-9]', '', 'g') = REGEXP_REPLACE(LOWER(TRIM(COALESCE(c.empresa_nome, ''))), '[^a-z0-9]', '', 'g')
+							 OR REGEXP_REPLACE(LOWER(TRIM(COALESCE(e_nome.nome_fantasia, ''))), '[^a-z0-9]', '', 'g') = REGEXP_REPLACE(LOWER(TRIM(COALESCE(c.empresa_nome, ''))), '[^a-z0-9]', '', 'g')
+						 )
 		WHERE 1=1`
 
 	args := []interface{}{}
@@ -303,12 +312,12 @@ func ListarContratos(c *gin.Context) {
 		var ct models.Contrato
 		err := rows.Scan(
 			&ct.ID, &ct.DataCriacao, &ct.EmpresaID, &ct.EmpresaNome, &ct.Descricao,
-			&ct.ValorTotal, &ct.DataEvento, &ct.LocalID, &ct.LocalNome, &ct.Modalidade,
+			&ct.ValorTotal, &ct.DataEvento, &ct.HoraChegada, &ct.LocalID, &ct.LocalNome, &ct.Modalidade,
 			&ct.QtdContratada, &ct.QtdKit, &ct.KM, &ct.Status, &ct.ValorPago,
 			&ct.DataPagamento, &ct.Consultor, &ct.PossuiKit, &ct.TipoKit,
 			&ct.LinkGateway, &ct.QRCodePix, &ct.NomeEvento, &ct.CapaURL,
 			&ct.Observacoes, &ct.PixCopiaECola, &ct.CriadoEm, &ct.AtualizadoEm,
-			&ct.QtdInscritos,
+			&ct.QtdInscritos, &ct.ResponsavelEmpresa,
 		)
 		if err != nil {
 			continue
@@ -345,7 +354,7 @@ func BuscarContrato(c *gin.Context) {
 	err := db.Pool.QueryRow(ctx, `
 		SELECT 
 			c.id, c.data_criacao::text, c.empresa_id, COALESCE(c.empresa_nome, ''), COALESCE(c.descricao, ''),
-			COALESCE(c.valor_total, 0), c.data_evento::text, c.local_id, COALESCE(c.local_nome, ''), COALESCE(c.modalidade, ''),
+			COALESCE(c.valor_total, 0), c.data_evento::text, COALESCE(c.hora_chegada, ''), c.local_id, COALESCE(c.local_nome, ''), COALESCE(c.modalidade, ''),
 			COALESCE(c.qtd_contratada, 0), COALESCE(c.qtd_kit, 0), COALESCE(c.km, ''), COALESCE(c.status, ''), COALESCE(c.valor_pago, 0),
 			c.data_pagamento::text, COALESCE(c.consultor, ''), COALESCE(c.possui_kit, false), COALESCE(c.tipo_kit, ''),
 			COALESCE(c.link_gateway, ''), COALESCE(c.qr_code_pix, ''), COALESCE(c.nome_evento, ''), COALESCE(c.capa_url, ''),
@@ -357,7 +366,7 @@ func BuscarContrato(c *gin.Context) {
 		GROUP BY c.id
 	`, id).Scan(
 		&ct.ID, &ct.DataCriacao, &ct.EmpresaID, &ct.EmpresaNome, &ct.Descricao,
-		&ct.ValorTotal, &ct.DataEvento, &ct.LocalID, &ct.LocalNome, &ct.Modalidade,
+		&ct.ValorTotal, &ct.DataEvento, &ct.HoraChegada, &ct.LocalID, &ct.LocalNome, &ct.Modalidade,
 		&ct.QtdContratada, &ct.QtdKit, &ct.KM, &ct.Status, &ct.ValorPago,
 		&ct.DataPagamento, &ct.Consultor, &ct.PossuiKit, &ct.TipoKit,
 		&ct.LinkGateway, &ct.QRCodePix, &ct.NomeEvento, &ct.CapaURL,
@@ -385,6 +394,7 @@ func BuscarContratoPublico(c *gin.Context) {
 		       COALESCE(nome_evento, ''),
 		       COALESCE(valor_total, 0),
 		       data_evento::text,
+		       COALESCE(hora_chegada, ''),
 		       COALESCE(local_nome, ''),
 		       COALESCE(modalidade, ''),
 		       COALESCE(link_gateway, ''),
@@ -398,6 +408,7 @@ func BuscarContratoPublico(c *gin.Context) {
 		LIMIT 1
 	`, id).Scan(
 		&ct.ID, &ct.EmpresaNome, &ct.NomeEvento, &ct.ValorTotal, &ct.DataEvento,
+		&ct.HoraChegada,
 		&ct.LocalNome, &ct.Modalidade, &ct.LinkGateway, &ct.QRCodePix, &ct.CapaURL, &ct.PixCopiaECola,
 		&ct.PrecoIngresso, &qtdContratada,
 	)
@@ -439,6 +450,7 @@ func BuscarContratoPublicoPorSlug(c *gin.Context) {
 		       COALESCE(descricao, ''),
 		       COALESCE(valor_total, 0),
 		       data_evento::text,
+		       COALESCE(hora_chegada, ''),
 		       COALESCE(local_nome, ''),
 		       COALESCE(modalidade, ''),
 		       COALESCE(link_gateway, ''),
@@ -472,6 +484,7 @@ func BuscarContratoPublicoPorSlug(c *gin.Context) {
 		var status string
 		if err := rows.Scan(
 			&cand.ID, &cand.EmpresaNome, &cand.NomeEvento, &descricao, &cand.ValorTotal, &cand.DataEvento,
+			&cand.HoraChegada,
 			&cand.LocalNome, &cand.Modalidade, &cand.LinkGateway, &cand.QRCodePix, &cand.CapaURL, &cand.PixCopiaECola,
 			&cand.PrecoIngresso, &candQtd, &status,
 		); err != nil {
@@ -547,15 +560,15 @@ func CriarContrato(c *gin.Context) {
 	_, err := db.Pool.Exec(context.Background(), `
 		INSERT INTO contratos (
 			id, empresa_id, empresa_nome, descricao, valor_total, data_evento,
-			local_id, local_nome, modalidade, qtd_contratada, qtd_kit, km,
+			hora_chegada, local_id, local_nome, modalidade, qtd_contratada, qtd_kit, km,
 			status, valor_pago, data_pagamento, consultor, possui_kit, tipo_kit,
 			link_gateway, qr_code_pix, nome_evento, capa_url, observacoes, pix_copia_cola
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-			$13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
 		)`,
 		id, input.EmpresaID, input.EmpresaNome, input.Descricao, input.ValorTotal, input.DataEvento,
-		input.LocalID, input.LocalNome, input.Modalidade, input.QtdContratada, input.QtdKit, input.KM,
+		input.HoraChegada, input.LocalID, input.LocalNome, input.Modalidade, input.QtdContratada, input.QtdKit, input.KM,
 		orDefault(normalizeContratoStatus(input.Status), contratoStatusNovoPedido), input.ValorPago, input.DataPagamento, input.Consultor,
 		input.PossuiKit, input.TipoKit, input.LinkGateway, input.QRCodePix,
 		input.NomeEvento, input.CapaURL, input.Observacoes, input.PixCopiaECola,
@@ -587,8 +600,24 @@ func CriarContratoRetroativo(c *gin.Context) {
 	}
 
 	input.EmpresaNome = strings.TrimSpace(input.EmpresaNome)
+	input.TipoPessoa = strings.ToLower(strings.TrimSpace(input.TipoPessoa))
+	input.Documento = strings.TrimSpace(input.Documento)
+	input.NomeFantasia = strings.TrimSpace(input.NomeFantasia)
+	input.Responsavel = strings.TrimSpace(input.Responsavel)
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.CidadeCliente = strings.TrimSpace(input.CidadeCliente)
+	input.UFCliente = strings.ToUpper(strings.TrimSpace(input.UFCliente))
 	input.NomeEvento = strings.TrimSpace(input.NomeEvento)
 	input.LocalNome = strings.TrimSpace(input.LocalNome)
+	input.LocalCEP = strings.TrimSpace(input.LocalCEP)
+	input.LocalLogradouro = strings.TrimSpace(input.LocalLogradouro)
+	input.LocalNumero = strings.TrimSpace(input.LocalNumero)
+	input.LocalComplemento = strings.TrimSpace(input.LocalComplemento)
+	input.LocalBairro = strings.TrimSpace(input.LocalBairro)
+	input.LocalCidade = strings.TrimSpace(input.LocalCidade)
+	input.LocalUF = strings.ToUpper(strings.TrimSpace(input.LocalUF))
+	input.LocalResponsavel = strings.TrimSpace(input.LocalResponsavel)
+	input.LocalWhatsapp = strings.TrimSpace(input.LocalWhatsapp)
 	input.Modalidade = strings.TrimSpace(input.Modalidade)
 	input.KM = strings.TrimSpace(input.KM)
 	input.Consultor = strings.TrimSpace(input.Consultor)
@@ -630,6 +659,81 @@ func CriarContratoRetroativo(c *gin.Context) {
 		input.ValorPago = 0
 	}
 
+	ctx := c.Request.Context()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var empresaID *string
+	docDigits := regexp.MustCompile(`\D`).ReplaceAllString(input.Documento, "")
+	if docDigits != "" {
+		var existente string
+		err = tx.QueryRow(ctx, `
+			SELECT id::text
+			  FROM empresas
+			 WHERE regexp_replace(COALESCE(documento, ''), '\\D', '', 'g') = $1
+			 ORDER BY criado_em DESC
+			 LIMIT 1
+		`, docDigits).Scan(&existente)
+		if err == nil {
+			empresaID = &existente
+		} else if err != pgx.ErrNoRows {
+			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+	}
+	if empresaID == nil {
+		var existente string
+		err = tx.QueryRow(ctx, `
+			SELECT id::text
+			  FROM empresas
+			 WHERE LOWER(TRIM(razao_social)) = LOWER(TRIM($1))
+			 ORDER BY criado_em DESC
+			 LIMIT 1
+		`, input.EmpresaNome).Scan(&existente)
+		if err == nil {
+			empresaID = &existente
+		} else if err != pgx.ErrNoRows {
+			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+	}
+	if empresaID == nil {
+		tipoPessoa := "PJ"
+		if input.TipoPessoa == "pf" {
+			tipoPessoa = "PF"
+		}
+		var novoID string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO empresas (
+				documento, razao_social, nome_fantasia, responsavel, email,
+				cidade, uf, tipo_pessoa, status, observacoes
+			) VALUES (
+				$1, $2, $3, $4, $5,
+				$6, $7, $8, 'Ativo', $9
+			)
+			RETURNING id::text
+		`,
+			input.Documento,
+			input.EmpresaNome,
+			input.NomeFantasia,
+			input.Responsavel,
+			input.Email,
+			input.CidadeCliente,
+			input.UFCliente,
+			tipoPessoa,
+			"Criado automaticamente via cadastro retroativo",
+		).Scan(&novoID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+		empresaID = &novoID
+	}
+
 	localNome := ""
 	var localID *string
 	if input.LocalNaoCadastrado {
@@ -637,6 +741,60 @@ func CriarContratoRetroativo(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Informe o local quando ele não estiver cadastrado"})
 			return
 		}
+
+		var existente string
+		err = tx.QueryRow(ctx, `
+			SELECT id::text
+			  FROM locais
+			 WHERE LOWER(TRIM(nome)) = LOWER(TRIM($1))
+			   AND COALESCE(LOWER(TRIM(cidade)), '') = COALESCE(LOWER(TRIM($2)), '')
+			   AND COALESCE(LOWER(TRIM(uf)), '') = COALESCE(LOWER(TRIM($3)), '')
+			 ORDER BY criado_em DESC
+			 LIMIT 1
+		`, input.LocalNome, input.LocalCidade, input.LocalUF).Scan(&existente)
+		if err == nil {
+			localID = &existente
+		} else if err != pgx.ErrNoRows {
+			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+
+		if localID == nil {
+			var novoLocalID string
+			err = tx.QueryRow(ctx, `
+				INSERT INTO locais (
+					codigo, nome, tipo, logradouro, numero, complemento, bairro, cidade, uf, cep,
+					tipo_taxa, taxa_valor, minimo_pessoas, capacidade_maxima, responsavel, whatsapp,
+					observacoes, ativo, criado_por_user_id
+				) VALUES (
+					$1, $2, 'Parque', $3, $4, $5, $6, $7, $8, $9,
+					'Fixo', 0, 150, $10, $11, $12,
+					$13, true, NULLIF($14, '')::uuid
+				)
+				RETURNING id::text
+			`,
+				uuid.New().String(),
+				input.LocalNome,
+				input.LocalLogradouro,
+				input.LocalNumero,
+				input.LocalComplemento,
+				input.LocalBairro,
+				input.LocalCidade,
+				input.LocalUF,
+				input.LocalCEP,
+				input.LocalCapacidadeMax,
+				input.LocalResponsavel,
+				input.LocalWhatsapp,
+				"Criado automaticamente via cadastro retroativo",
+				authUser.ID,
+			).Scan(&novoLocalID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+				return
+			}
+			localID = &novoLocalID
+		}
+
 		localNome = input.LocalNome
 	} else {
 		if input.LocalID == nil || strings.TrimSpace(*input.LocalID) == "" {
@@ -644,7 +802,7 @@ func CriarContratoRetroativo(c *gin.Context) {
 			return
 		}
 		localIDValue := strings.TrimSpace(*input.LocalID)
-		if err := db.Pool.QueryRow(context.Background(), `SELECT nome FROM locais WHERE id = $1`, localIDValue).Scan(&localNome); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT nome FROM locais WHERE id = $1`, localIDValue).Scan(&localNome); err != nil {
 			c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Local cadastrado não encontrado"})
 			return
 		}
@@ -653,8 +811,67 @@ func CriarContratoRetroativo(c *gin.Context) {
 
 	descricao := "[origem:retroativo] Evento cadastrado manualmente"
 	observacoes := "[origem:retroativo]"
+	clienteDetalhes := []string{}
+	if input.TipoPessoa != "" {
+		clienteDetalhes = append(clienteDetalhes, "tipo_pessoa="+input.TipoPessoa)
+	}
+	if input.Documento != "" {
+		clienteDetalhes = append(clienteDetalhes, "documento="+input.Documento)
+	}
+	if input.NomeFantasia != "" {
+		clienteDetalhes = append(clienteDetalhes, "nome_fantasia="+input.NomeFantasia)
+	}
+	if input.Responsavel != "" {
+		clienteDetalhes = append(clienteDetalhes, "responsavel="+input.Responsavel)
+	}
+	if input.Email != "" {
+		clienteDetalhes = append(clienteDetalhes, "email="+input.Email)
+	}
+	if input.CidadeCliente != "" {
+		clienteDetalhes = append(clienteDetalhes, "cidade_cliente="+input.CidadeCliente)
+	}
+	if input.UFCliente != "" {
+		clienteDetalhes = append(clienteDetalhes, "uf_cliente="+input.UFCliente)
+	}
+	if len(clienteDetalhes) > 0 {
+		observacoes += " [cliente_detalhes:" + strings.Join(clienteDetalhes, "; ") + "]"
+	}
 	if input.LocalNaoCadastrado {
 		observacoes += " [local:manual]"
+		if input.LocalCEP != "" || input.LocalLogradouro != "" || input.LocalNumero != "" || input.LocalComplemento != "" || input.LocalBairro != "" || input.LocalCidade != "" || input.LocalUF != "" || input.LocalCapacidadeMax != nil || input.LocalResponsavel != "" || input.LocalWhatsapp != "" {
+			detalhes := []string{}
+			if input.LocalCEP != "" {
+				detalhes = append(detalhes, "cep="+input.LocalCEP)
+			}
+			if input.LocalLogradouro != "" {
+				detalhes = append(detalhes, "logradouro="+input.LocalLogradouro)
+			}
+			if input.LocalNumero != "" {
+				detalhes = append(detalhes, "numero="+input.LocalNumero)
+			}
+			if input.LocalComplemento != "" {
+				detalhes = append(detalhes, "complemento="+input.LocalComplemento)
+			}
+			if input.LocalBairro != "" {
+				detalhes = append(detalhes, "bairro="+input.LocalBairro)
+			}
+			if input.LocalCidade != "" {
+				detalhes = append(detalhes, "cidade="+input.LocalCidade)
+			}
+			if input.LocalUF != "" {
+				detalhes = append(detalhes, "uf="+input.LocalUF)
+			}
+			if input.LocalCapacidadeMax != nil {
+				detalhes = append(detalhes, fmt.Sprintf("capacidade_maxima=%d", *input.LocalCapacidadeMax))
+			}
+			if input.LocalResponsavel != "" {
+				detalhes = append(detalhes, "responsavel="+input.LocalResponsavel)
+			}
+			if input.LocalWhatsapp != "" {
+				detalhes = append(detalhes, "whatsapp="+input.LocalWhatsapp)
+			}
+			observacoes += " [local_detalhes:" + strings.Join(detalhes, "; ") + "]"
+		}
 	}
 	if input.Observacoes != "" {
 		observacoes += " " + input.Observacoes
@@ -662,24 +879,26 @@ func CriarContratoRetroativo(c *gin.Context) {
 
 	id := fmt.Sprintf("%d-%d", time.Now().Year(), time.Now().UnixMilli())
 
-	_, err = db.Pool.Exec(context.Background(), `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO contratos (
 			id, empresa_id, empresa_nome, descricao, valor_total, data_evento,
-			local_id, local_nome, modalidade, qtd_contratada, qtd_kit, km,
+			hora_chegada, local_id, local_nome, modalidade, qtd_contratada, qtd_kit, km,
 			status, valor_pago, data_pagamento, consultor, possui_kit, tipo_kit,
 			link_gateway, qr_code_pix, nome_evento, capa_url, observacoes, pix_copia_cola
 		) VALUES (
-			$1, NULL, $2, $3, $4, $5,
-			$6, $7, $8, $9, 0, $10,
-			$11, $12, NULL, $13, false, '',
-			'', '', $14, '', $15, ''
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10, $11, 0, $12,
+			$13, $14, NULL, $15, false, '',
+			'', '', $16, '', $17, ''
 		)
 	`,
 		id,
+		empresaID,
 		input.EmpresaNome,
 		descricao,
 		input.ValorTotal,
 		eventDate.Format("2006-01-02"),
+		input.HoraChegada,
 		localID,
 		localNome,
 		input.Modalidade,
@@ -692,6 +911,11 @@ func CriarContratoRetroativo(c *gin.Context) {
 		observacoes,
 	)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
 		return
 	}
@@ -731,15 +955,15 @@ func AtualizarContrato(c *gin.Context) {
 	result, err := db.Pool.Exec(ctx, `
 		UPDATE contratos SET
 			empresa_id = $1, empresa_nome = $2, descricao = $3, valor_total = $4,
-			data_evento = $5, local_id = $6, local_nome = $7, modalidade = $8,
-			qtd_contratada = $9, qtd_kit = $10, km = $11, status = $12,
-			valor_pago = $13, data_pagamento = $14, consultor = $15,
-			possui_kit = $16, tipo_kit = $17, link_gateway = $18,
-			qr_code_pix = $19, nome_evento = $20, capa_url = $21,
-			observacoes = $22, pix_copia_cola = $23
-		WHERE id = $24`,
+			data_evento = $5, hora_chegada = $6, local_id = $7, local_nome = $8, modalidade = $9,
+			qtd_contratada = $10, qtd_kit = $11, km = $12, status = $13,
+			valor_pago = $14, data_pagamento = $15, consultor = $16,
+			possui_kit = $17, tipo_kit = $18, link_gateway = $19,
+			qr_code_pix = $20, nome_evento = $21, capa_url = $22,
+			observacoes = $23, pix_copia_cola = $24
+		WHERE id = $25`,
 		input.EmpresaID, input.EmpresaNome, input.Descricao, input.ValorTotal,
-		input.DataEvento, input.LocalID, input.LocalNome, input.Modalidade,
+		input.DataEvento, input.HoraChegada, input.LocalID, input.LocalNome, input.Modalidade,
 		input.QtdContratada, input.QtdKit, input.KM, normalizeContratoStatus(input.Status),
 		input.ValorPago, input.DataPagamento, input.Consultor,
 		input.PossuiKit, input.TipoKit, input.LinkGateway,

@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -20,11 +20,15 @@ function LoginForm() {
   const [loginVal, setLoginVal] = useState('')
   const [senha, setSenha] = useState('')
   const [loading, setLoading] = useState(false)
+  const [erroLogin, setErroLogin] = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    setErroLogin('')
     if (!loginVal || !senha) {
-      toast.error('Preencha login e senha')
+      const msg = 'Preencha login e senha'
+      setErroLogin(msg)
+      toast.error(msg)
       return
     }
 
@@ -36,7 +40,9 @@ function LoginForm() {
       router.push(next)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erro ao fazer login'
-      toast.error(msg || 'Falha no login. Use admin / admin123 para o acesso demo.')
+      const erro = msg || 'Falha no login. Verifique suas credenciais.'
+      setErroLogin(erro)
+      toast.error(erro)
     } finally {
       setLoading(false)
     }
@@ -50,7 +56,7 @@ function LoginForm() {
           id="login"
           autoFocus
           autoComplete="username"
-          placeholder="admin"
+          placeholder="Seu usuário"
           value={loginVal}
           onChange={e => setLoginVal(e.target.value)}
           disabled={loading}
@@ -63,29 +69,29 @@ function LoginForm() {
           id="senha"
           type="password"
           autoComplete="current-password"
-          placeholder="admin123"
+          placeholder="Sua senha"
           value={senha}
           onChange={e => setSenha(e.target.value)}
           disabled={loading}
         />
       </div>
 
-      <p className="rounded-xl bg-primary/10 px-3 py-2 text-xs text-foreground ring-1 ring-primary/25">
-        Acesso demo: login <strong>admin</strong> e senha <strong>admin123</strong>
-      </p>
-
       <Button type="submit" className="h-11 w-full text-sm font-bold uppercase tracking-[0.18em]" disabled={loading}>
         {loading ? 'Entrando…' : 'Entrar'}
       </Button>
+
+      {erroLogin && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+          {erroLogin}
+        </p>
+      )}
     </form>
   )
 }
 
 export default function LoginPage() {
   const { setTheme, theme, resolvedTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { setMounted(true) }, [])
-  const isDark = mounted && (theme === 'dark' || (theme === 'system' && resolvedTheme === 'dark'))
+  const isDark = theme === 'dark' || (theme === 'system' && resolvedTheme === 'dark')
 
   return (
     <main className="min-h-screen flex items-center justify-center px-4 py-10">

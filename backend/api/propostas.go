@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +51,25 @@ func empresaEhAomenos1kmProposta(empresaNome string) bool {
 	return strings.Contains(normalized, "aomenos1km")
 }
 
+var retroativoValorPagoRegex = regexp.MustCompile(`(?i)\[retroativo:valor_pago=([0-9]+(?:[\.,][0-9]+)?)\]`)
+
+func propostaEhRetroativa(observacoes string) bool {
+	return strings.Contains(strings.ToLower(observacoes), "[origem:retroativo]")
+}
+
+func extrairValorPagoRetroativo(observacoes string) float64 {
+	match := retroativoValorPagoRegex.FindStringSubmatch(observacoes)
+	if len(match) < 2 {
+		return 0
+	}
+	raw := strings.ReplaceAll(strings.TrimSpace(match[1]), ",", ".")
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
+}
+
 func canTransitionPropostaStatus(current, next string) bool {
 	if current == next {
 		return true
@@ -70,7 +91,7 @@ func ListarPropostas(c *gin.Context) {
 	ctx := c.Request.Context()
 	query := `
 		SELECT id, orcamento_publico_id, empresa_id, empresa_nome, responsavel, email, telefone,
-		       evento_nome, data_evento::text, local_id, local_nome, cidade_evento, qtd_pessoas,
+		       evento_nome, data_evento::text, COALESCE(hora_chegada, ''), local_id, local_nome, cidade_evento, qtd_pessoas,
 		       km_evento, margem_percent, subtotal_itens, taxa_local, valor_margem, valor_total,
 		       observacoes, status, criado_em, atualizado_em
 		FROM propostas
@@ -91,7 +112,7 @@ func ListarPropostas(c *gin.Context) {
 		var p models.Proposta
 		if err := rows.Scan(
 			&p.ID, &p.OrcamentoPublico, &p.EmpresaID, &p.EmpresaNome, &p.Responsavel, &p.Email, &p.Telefone,
-			&p.EventoNome, &p.DataEvento, &p.LocalID, &p.LocalNome, &p.CidadeEvento, &p.QtdPessoas,
+			&p.EventoNome, &p.DataEvento, &p.HoraChegada, &p.LocalID, &p.LocalNome, &p.CidadeEvento, &p.QtdPessoas,
 			&p.KMEvento, &p.MargemPercent, &p.SubtotalItens, &p.TaxaLocal, &p.ValorMargem, &p.ValorTotal,
 			&p.Observacoes, &p.Status, &p.CriadoEm, &p.AtualizadoEm,
 		); err != nil {
@@ -112,14 +133,14 @@ func BuscarProposta(c *gin.Context) {
 	var p models.Proposta
 	err := db.Pool.QueryRow(ctx, `
 		SELECT p.id, p.orcamento_publico_id, p.empresa_id, p.empresa_nome, p.responsavel, p.email, p.telefone,
-		       p.evento_nome, p.data_evento::text, p.local_id, p.local_nome, p.cidade_evento, p.qtd_pessoas,
+		       p.evento_nome, p.data_evento::text, COALESCE(p.hora_chegada, ''), p.local_id, p.local_nome, p.cidade_evento, p.qtd_pessoas,
 		       p.km_evento, p.margem_percent, p.subtotal_itens, p.taxa_local, p.valor_margem, p.valor_total,
 		       p.observacoes, p.status, p.criado_em, p.atualizado_em,
 		       COALESCE((SELECT DISTINCT ON (proposta_id) autor_nome FROM notificacoes WHERE proposta_id = p.id ORDER BY proposta_id, criado_em DESC), '') AS autor_nome
 		FROM propostas p
 		WHERE p.id = $1`, id).Scan(
 		&p.ID, &p.OrcamentoPublico, &p.EmpresaID, &p.EmpresaNome, &p.Responsavel, &p.Email, &p.Telefone,
-		&p.EventoNome, &p.DataEvento, &p.LocalID, &p.LocalNome, &p.CidadeEvento, &p.QtdPessoas,
+		&p.EventoNome, &p.DataEvento, &p.HoraChegada, &p.LocalID, &p.LocalNome, &p.CidadeEvento, &p.QtdPessoas,
 		&p.KMEvento, &p.MargemPercent, &p.SubtotalItens, &p.TaxaLocal, &p.ValorMargem, &p.ValorTotal,
 		&p.Observacoes, &p.Status, &p.CriadoEm, &p.AtualizadoEm, &p.AutorNome,
 	)
@@ -185,15 +206,15 @@ func CriarProposta(c *gin.Context) {
 		INSERT INTO propostas (
 			orcamento_publico_id, empresa_id, empresa_nome, responsavel, email, telefone,
 			evento_nome, data_evento, local_id, local_nome, cidade_evento, qtd_pessoas,
-			km_evento, margem_percent, subtotal_itens, taxa_local, valor_margem, valor_total,
+			km_evento, margem_percent, subtotal_itens, taxa_local, valor_margem, valor_total, hora_chegada,
 			preco_ingresso, observacoes, status
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
 		) RETURNING id`,
 		input.OrcamentoPublico, input.EmpresaID, input.EmpresaNome, input.Responsavel, input.Email, input.Telefone,
 		input.EventoNome, input.DataEvento, input.LocalID, input.LocalNome, input.CidadeEvento, input.QtdPessoas,
 		input.KMEvento, input.MargemPercent, input.SubtotalItens, input.TaxaLocal, input.ValorMargem, input.ValorTotal,
-		input.PrecoIngresso, input.Observacoes, status,
+		input.HoraChegada, input.PrecoIngresso, input.Observacoes, status,
 	).Scan(&propostaID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
@@ -297,11 +318,11 @@ func ConverterPropostaContrato(c *gin.Context) {
 	var p models.Proposta
 	err := db.Pool.QueryRow(context.Background(), `
 		SELECT id, orcamento_publico_id, empresa_id, empresa_nome, responsavel, evento_nome,
-		       data_evento::text, local_id, local_nome, qtd_pessoas, km_evento, valor_total, preco_ingresso, status, observacoes
+		       data_evento::text, COALESCE(hora_chegada, ''), local_id, local_nome, qtd_pessoas, km_evento, valor_total, preco_ingresso, status, observacoes
 		  FROM propostas
 		 WHERE id = $1`, id).Scan(
 		&p.ID, &p.OrcamentoPublico, &p.EmpresaID, &p.EmpresaNome, &p.Responsavel, &p.EventoNome,
-		&p.DataEvento, &p.LocalID, &p.LocalNome, &p.QtdPessoas, &p.KMEvento, &p.ValorTotal, &p.PrecoIngresso, &p.Status, &p.Observacoes,
+		&p.DataEvento, &p.HoraChegada, &p.LocalID, &p.LocalNome, &p.QtdPessoas, &p.KMEvento, &p.ValorTotal, &p.PrecoIngresso, &p.Status, &p.Observacoes,
 	)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.APIResponse{Success: false, Error: "Proposta não encontrada"})
@@ -334,6 +355,12 @@ func ConverterPropostaContrato(c *gin.Context) {
 		descricaoContrato = "[origem:gerador] [origem:site] Proposta convertida a partir de solicitação do formulário público"
 	}
 	statusInicialContrato := "Em Negociação"
+	valorPagoInicial := 0.0
+	if propostaEhRetroativa(p.Observacoes) {
+		descricaoContrato = "[origem:gerador] [origem:retroativo] Evento retroativo convertido a partir do gerador"
+		statusInicialContrato = "Finalizado"
+		valorPagoInicial = extrairValorPagoRetroativo(p.Observacoes)
+	}
 	if empresaEhAomenos1kmProposta(p.EmpresaNome) {
 		statusInicialContrato = "Confirmado"
 	}
@@ -349,14 +376,14 @@ func ConverterPropostaContrato(c *gin.Context) {
 	_, err = db.Pool.Exec(context.Background(), `
 		INSERT INTO contratos (
 			id, empresa_id, empresa_nome, descricao, valor_total, data_evento,
-			local_id, local_nome, modalidade, qtd_contratada, qtd_kit, km,
+			hora_chegada, local_id, local_nome, modalidade, qtd_contratada, qtd_kit, km,
 			status, valor_pago, consultor, possui_kit, tipo_kit,
 			nome_evento, observacoes, preco_ingresso
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11, $12,
-			$13, $14, $15, $16, $17,
-			$18, $19, $20
+			$7, $8, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17, $18,
+			$19, $20, $21
 		)`,
 		contratoID,
 		p.EmpresaID,
@@ -364,6 +391,7 @@ func ConverterPropostaContrato(c *gin.Context) {
 		descricaoContrato,
 		p.ValorTotal,
 		p.DataEvento,
+		p.HoraChegada,
 		p.LocalID,
 		p.LocalNome,
 		modalidade,
@@ -371,7 +399,7 @@ func ConverterPropostaContrato(c *gin.Context) {
 		0,
 		fmt.Sprintf("%.0f", p.KMEvento),
 		statusInicialContrato,
-		0,
+		valorPagoInicial,
 		consultorResponsavel,
 		false,
 		"",

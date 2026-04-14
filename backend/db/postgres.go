@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +23,7 @@ func Connect() error {
 	if err != nil {
 		return fmt.Errorf("erro ao parsear CONFIG do banco: %w", err)
 	}
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {

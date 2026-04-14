@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
 import { contratos, locais, participantes, storage, type Contrato, type Local, type Participante } from '@/lib/api'
+import { formatCPF } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -609,6 +610,7 @@ export default function GestaoEventoPage() {
         descricao: `${formTreino.nome} (${formTreino.hora})`,
         valor_total: 0,
         data_evento: formTreino.data,
+        hora_chegada: formTreino.hora,
         local_nome: localSelecionado.nome,
         modalidade: 'Treino',
         qtd_contratada: Number(formTreino.qtd || 0),
@@ -1420,7 +1422,7 @@ export default function GestaoEventoPage() {
                     </div>
                     <div className="md:col-span-6">
                       <label className="mb-1 block text-sm font-semibold text-zinc-700">CPF</label>
-                      <Input value={formParticipante.cpf} readOnly />
+                      <Input value={formatCPF(formParticipante.cpf)} readOnly />
                     </div>
                     <div className="md:col-span-6">
                       <label className="mb-1 block text-sm font-semibold text-zinc-700">Data Nascimento</label>

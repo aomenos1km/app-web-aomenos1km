@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,26 +13,38 @@ import (
 
 type authzUser struct {
 	ID     string
+	Login  string
 	Nome   string
 	Perfil string
+}
+
+func contextString(raw interface{}) string {
+	switch v := raw.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []byte:
+		return strings.TrimSpace(string(v))
+	default:
+		if raw == nil {
+			return ""
+		}
+		return strings.TrimSpace(fmt.Sprint(raw))
+	}
 }
 
 func getAuthzUser(c *gin.Context) authzUser {
 	u := authzUser{}
 	if raw, ok := c.Get("user_id"); ok {
-		if v, ok := raw.(string); ok {
-			u.ID = strings.TrimSpace(v)
-		}
+		u.ID = contextString(raw)
+	}
+	if raw, ok := c.Get("login"); ok {
+		u.Login = contextString(raw)
 	}
 	if raw, ok := c.Get("nome"); ok {
-		if v, ok := raw.(string); ok {
-			u.Nome = strings.TrimSpace(v)
-		}
+		u.Nome = contextString(raw)
 	}
 	if raw, ok := c.Get("perfil"); ok {
-		if v, ok := raw.(string); ok {
-			u.Perfil = strings.TrimSpace(v)
-		}
+		u.Perfil = contextString(raw)
 	}
 	return u
 }
@@ -147,27 +160,6 @@ func canAccessParticipante(ctx context.Context, user authzUser, participanteID s
 	}
 
 	return namesMatch(consultor, user.Nome), nil
-}
-
-func canAccessProposta(ctx context.Context, user authzUser, propostaID string) (bool, error) {
-	if user.IsAdmin() {
-		return true, nil
-	}
-	if strings.TrimSpace(propostaID) == "" || strings.TrimSpace(user.Nome) == "" {
-		return false, nil
-	}
-
-	var responsavel string
-	err := db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(responsavel, '')
-		FROM propostas
-		WHERE id = $1
-	`, propostaID).Scan(&responsavel)
-	if err != nil {
-		return false, err
-	}
-
-	return namesMatch(responsavel, user.Nome), nil
 }
 
 func canManageInsumo(ctx context.Context, user authzUser, insumoID string) (bool, error) {

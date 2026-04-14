@@ -177,6 +177,126 @@ func GetMetaMensal(c *gin.Context) {
 	c.JSON(http.StatusOK, models.APIResponse{Success: true, Data: result})
 }
 
+// SalvarMetaMensal atualiza a meta mensal (somente Admin)
+func SalvarMetaMensal(c *gin.Context) {
+	ctx := context.Background()
+	mes := c.Param("mes")
+	ano := c.Param("ano")
+
+	mesInt, err := strconv.Atoi(mes)
+	if err != nil || mesInt < 1 || mesInt > 12 {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Mês inválido"})
+		return
+	}
+
+	anoInt, err := strconv.Atoi(ano)
+	if err != nil || anoInt < 2000 || anoInt > 2100 {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Ano inválido"})
+		return
+	}
+
+	var payload struct {
+		MetaVendas    float64 `json:"meta_vendas"`
+		MetaContratos int     `json:"meta_contratos"`
+		Descricao     string  `json:"descricao"`
+	}
+
+	if err := c.BindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "Dados inválidos"})
+		return
+	}
+
+	// Tenta fazer UPDATE; se não existir, faz INSERT
+	_, err = db.Pool.Exec(ctx, `
+		UPDATE metas_mensais
+		SET meta_vendas = $1, meta_contratos = $2, descricao = $3, ativo = true, atualizado_em = NOW()
+		WHERE mes = $4 AND ano = $5
+	`, payload.MetaVendas, payload.MetaContratos, payload.Descricao, mesInt, anoInt)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: "Erro ao atualizar meta"})
+		return
+	}
+
+	// Se nenhuma linha foi afetada, insere
+	var rowsAffected int64
+	_ = db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM metas_mensais WHERE mes = $1 AND ano = $2
+	`, mesInt, anoInt).Scan(&rowsAffected)
+
+	if rowsAffected == 0 {
+		_, err = db.Pool.Exec(ctx, `
+			INSERT INTO metas_mensais (mes, ano, meta_vendas, meta_km, meta_contratos, descricao, ativo)
+			VALUES ($1, $2, $3, $4, $5, $6, true)
+		`, mesInt, anoInt, payload.MetaVendas, 0, payload.MetaContratos, payload.Descricao)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: "Erro ao criar meta"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Success: true, Data: map[string]interface{}{
+		"mes":            mesInt,
+		"ano":            anoInt,
+		"meta_vendas":    payload.MetaVendas,
+		"meta_contratos": payload.MetaContratos,
+		"descricao":      payload.Descricao,
+	}})
+}
+
+// ListarMetasMensais retorna todas as metas de um período
+func ListarMetasMensais(c *gin.Context) {
+	ctx := context.Background()
+	now := time.Now()
+
+	anoParam := c.Query("ano")
+	if anoParam == "" {
+		anoParam = strconv.Itoa(now.Year())
+	}
+
+	anoInt, err := strconv.Atoi(anoParam)
+	if err != nil || anoInt < 2000 || anoInt > 2100 {
+		anoInt = now.Year()
+	}
+
+	rows, _ := db.Pool.Query(ctx, `
+		SELECT mes, ano, meta_vendas, meta_km, meta_contratos, descricao, ativo, atualizado_em
+		FROM metas_mensais
+		WHERE ano = $1
+		ORDER BY mes ASC
+	`, anoInt)
+
+	var metas []map[string]interface{}
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var mes, ano, metaContratos int
+			var metaVendas, metaKM float64
+			var descricao string
+			var ativo bool
+			var atualizadoEm time.Time
+
+			_ = rows.Scan(&mes, &ano, &metaVendas, &metaKM, &metaContratos, &descricao, &ativo, &atualizadoEm)
+			metas = append(metas, map[string]interface{}{
+				"mes":            mes,
+				"ano":            ano,
+				"meta_vendas":    metaVendas,
+				"meta_km":        metaKM,
+				"meta_contratos": metaContratos,
+				"descricao":      descricao,
+				"ativo":          ativo,
+				"atualizado_em":  atualizadoEm,
+			})
+		}
+	}
+	if metas == nil {
+		metas = []map[string]interface{}{}
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{Success: true, Data: metas})
+}
+
 // GetTendencia6Meses retorna dados dos últimos 6 meses
 func GetTendencia6Meses(c *gin.Context) {
 	ctx := context.Background()
