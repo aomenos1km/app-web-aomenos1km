@@ -19,8 +19,40 @@ const sora = Sora({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://www.aomenos1km.com.br'),
   title: TITLE_SITE_DEFAULT,
   description: 'Plataforma de gestão de eventos esportivos da Aomenos1km',
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon32x32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon.ico', sizes: 'any' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/favicon32x32.png',
+  },
+  openGraph: {
+    title: TITLE_SITE_DEFAULT,
+    description: 'Plataforma de gestão de eventos esportivos da Aomenos1km',
+    url: 'https://www.aomenos1km.com.br',
+    siteName: 'Aomenos1km - Gestão de Eventos Esportivos',
+    locale: 'pt_BR',
+    type: 'website',
+    images: [
+      {
+        url: '/logo-aomenos1km.png',
+        width: 1200,
+        height: 630,
+        alt: 'Aomenos1km - Gestão de Eventos Esportivos',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: TITLE_SITE_DEFAULT,
+    description: 'Plataforma de gestão de eventos esportivos da Aomenos1km',
+    images: ['/logo-aomenos1km.png'],
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
