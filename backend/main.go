@@ -40,7 +40,12 @@ func loadLocalEnv() {
 }
 
 func allowedOriginsFromEnv() []string {
-	origins := []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+	origins := []string{
+		"http://localhost:3000",
+		"http://127.0.0.1:3000",
+		"https://aomenos1km.com.br",
+		"https://www.aomenos1km.com.br",
+	}
 
 	if single := strings.TrimSpace(os.Getenv("FRONTEND_URL")); single != "" {
 		origins = append(origins, single)
