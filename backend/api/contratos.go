@@ -993,14 +993,43 @@ func DeletarContrato(c *gin.Context) {
 		return
 	}
 
-	result, err := db.Pool.Exec(ctx,
-		`DELETE FROM contratos WHERE id = $1`, id)
+	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// Limpeza defensiva para ambientes com schema legado sem ON DELETE CASCADE em todas as FKs.
+	if _, err := tx.Exec(ctx, `DELETE FROM notificacoes WHERE contrato_id = $1`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM contrato_parcelas WHERE contrato_id = $1`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM participantes WHERE contrato_id = $1`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	result, err := tx.Exec(ctx, `DELETE FROM contratos WHERE id = $1`, id)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "violates foreign key") {
+			c.JSON(http.StatusConflict, models.APIResponse{Success: false, Error: "Não é possível remover este contrato porque ele possui vínculos ativos em outros registros"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
 		return
 	}
 	if result.RowsAffected() == 0 {
 		c.JSON(http.StatusNotFound, models.APIResponse{Success: false, Error: "Contrato não encontrado"})
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
 		return
 	}
 
