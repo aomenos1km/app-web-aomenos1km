@@ -228,9 +228,48 @@ func DeletarEmpresa(c *gin.Context) {
 		return
 	}
 
-	id := c.Param("id")
-	result, err := db.Pool.Exec(context.Background(), `DELETE FROM empresas WHERE id = $1`, id)
+	id := strings.TrimSpace(c.Param("id"))
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Error: "ID de empresa inválido"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	var contratosVinculados int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM contratos WHERE empresa_id = $1`, id).Scan(&contratosVinculados); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	var propostasVinculadas int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM propostas WHERE empresa_id = $1`, id).Scan(&propostasVinculadas); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	if contratosVinculados > 0 || propostasVinculadas > 0 {
+		motivos := make([]string, 0, 2)
+		if contratosVinculados > 0 {
+			motivos = append(motivos, fmt.Sprintf("%d contrato(s)", contratosVinculados))
+		}
+		if propostasVinculadas > 0 {
+			motivos = append(motivos, fmt.Sprintf("%d proposta(s)", propostasVinculadas))
+		}
+
+		c.JSON(http.StatusConflict, models.APIResponse{
+			Success: false,
+			Error:   "Não é possível remover a empresa porque ela está vinculada a " + strings.Join(motivos, " e ") + ".",
+		})
+		return
+	}
+
+	result, err := db.Pool.Exec(ctx, `DELETE FROM empresas WHERE id = $1`, id)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "violates foreign key") {
+			c.JSON(http.StatusConflict, models.APIResponse{Success: false, Error: "Não é possível remover a empresa porque existem vínculos ativos em outros registros"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Error: err.Error()})
 		return
 	}
