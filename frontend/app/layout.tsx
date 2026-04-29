@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider } from '@/hooks/useAuth'
 import { ThemeProvider } from '@/components/theme-provider'
 import { TITLE_SITE_DEFAULT } from '@/lib/page-titles'
+import KeepAlive from '@/components/KeepAlive'
 
 const manrope = Manrope({
   subsets: ['latin'],
@@ -61,6 +62,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${manrope.variable} ${sora.variable} font-sans antialiased bg-background text-foreground`}>
         <ThemeProvider>
           <AuthProvider>
+            <KeepAlive />
             {children}
             <Toaster richColors position="top-right" />
           </AuthProvider>

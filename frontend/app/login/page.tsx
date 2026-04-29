@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { Suspense, useState } from 'react'
+import { Suspense, useState, useEffect, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -10,7 +10,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Sun, Moon } from 'lucide-react'
+import { Sun, Moon, ServerCrash } from 'lucide-react'
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 
 function LoginForm() {
   const router = useRouter()
@@ -21,10 +23,18 @@ function LoginForm() {
   const [senha, setSenha] = useState('')
   const [loading, setLoading] = useState(false)
   const [erroLogin, setErroLogin] = useState('')
+  const [coldStart, setColdStart] = useState(false)
+  const coldStartTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Acorda o backend assim que a tela de login é exibida
+  useEffect(() => {
+    fetch(`${API_BASE}/health`, { method: 'GET', cache: 'no-store' }).catch(() => {})
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErroLogin('')
+    setColdStart(false)
     if (!loginVal || !senha) {
       const msg = 'Preencha login e senha'
       setErroLogin(msg)
@@ -33,6 +43,10 @@ function LoginForm() {
     }
 
     setLoading(true)
+
+    // Após 5 s sem resposta, avisa que o servidor pode estar iniciando
+    coldStartTimer.current = setTimeout(() => setColdStart(true), 5000)
+
     try {
       await login(loginVal, senha)
       document.cookie = `auth_token=1; path=/; SameSite=Lax`
@@ -44,7 +58,9 @@ function LoginForm() {
       setErroLogin(erro)
       toast.error(erro)
     } finally {
+      if (coldStartTimer.current) clearTimeout(coldStartTimer.current)
       setLoading(false)
+      setColdStart(false)
     }
   }
 
@@ -79,6 +95,13 @@ function LoginForm() {
       <Button type="submit" className="h-11 w-full text-sm font-bold uppercase tracking-[0.18em]" disabled={loading}>
         {loading ? 'Entrando…' : 'Entrar'}
       </Button>
+
+      {coldStart && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-300">
+          <ServerCrash className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>O servidor está iniciando… Isso pode levar até 1 minuto na primeira entrada do dia. Aguarde.</span>
+        </div>
+      )}
 
       {erroLogin && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
